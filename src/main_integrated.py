@@ -1,14 +1,15 @@
+import logging
+import os
+from datetime import date, datetime
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Any
-from datetime import datetime, date
-import os
-import uuid
-import logging
 
 # BigQuery direkt importieren
 try:
     from google.cloud import bigquery
+
     BIGQUERY_AVAILABLE = True
     print("✅ BigQuery verfügbar")
 except ImportError:
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="RA Autohaus Tracker API",
-    description="Multi-Source Fahrzeugprozess-Tracking für Reinhardt Automobile", 
-    version="1.0.0"
+    description="Multi-Source Fahrzeugprozess-Tracking für Reinhardt Automobile",
+    version="1.0.0",
 )
 
 # BigQuery Client (falls verfügbar)
@@ -40,6 +41,7 @@ else:
 vehicles_db = {}
 processes_db = {}
 
+
 class VehicleCreate(BaseModel):
     fin: str = Field(..., min_length=17, max_length=17)
     marke: str
@@ -47,6 +49,7 @@ class VehicleCreate(BaseModel):
     antriebsart: str
     farbe: str
     baujahr: Optional[int] = None
+
 
 class ProcessCreate(BaseModel):
     fin: str = Field(..., min_length=17, max_length=17)
@@ -56,15 +59,16 @@ class ProcessCreate(BaseModel):
     anlieferung_datum: Optional[date] = None
     notizen: Optional[str] = None
 
+
 async def save_vehicle_to_bigquery(vehicle_data: dict) -> bool:
     """Fahrzeug in BigQuery speichern"""
     if not bq_client:
         return False
-    
+
     try:
         table_id = "ra-autohaus-tracker.autohaus.fahrzeuge_stamm"
         table = bq_client.get_table(table_id)
-        
+
         row = {
             "fin": vehicle_data["fin"],
             "marke": vehicle_data["marke"],
@@ -73,20 +77,21 @@ async def save_vehicle_to_bigquery(vehicle_data: dict) -> bool:
             "farbe": vehicle_data["farbe"],
             "baujahr": vehicle_data.get("baujahr"),
             "ersterfassung_datum": datetime.now(),
-            "aktiv": True
+            "aktiv": True,
         }
-        
+
         errors = bq_client.insert_rows_json(table, [row])
         if errors:
             logger.error(f"BigQuery errors: {errors}")
             return False
-        
+
         logger.info(f"Vehicle saved to BigQuery: {vehicle_data['fin']}")
         return True
-        
+
     except Exception as e:
         logger.error(f"BigQuery save error: {e}")
         return False
+
 
 @app.get("/")
 async def root():
@@ -94,14 +99,15 @@ async def root():
         "message": "RA Autohaus Tracker API",
         "version": "1.0.0",
         "docs": "/docs",
-        "bigquery_available": BIGQUERY_AVAILABLE
+        "bigquery_available": BIGQUERY_AVAILABLE,
     }
+
 
 @app.get("/health")
 async def health_check():
     """Health Check mit BigQuery Status"""
     bigquery_status = "healthy" if bq_client else "unavailable"
-    
+
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -109,9 +115,10 @@ async def health_check():
         "services": {
             "api": "healthy",
             "bigquery": bigquery_status,
-            "bigquery_available": BIGQUERY_AVAILABLE
-        }
+            "bigquery_available": BIGQUERY_AVAILABLE,
+        },
     }
+
 
 @app.post("/fahrzeuge", status_code=201)
 async def create_fahrzeug(fahrzeug: VehicleCreate):
@@ -119,24 +126,25 @@ async def create_fahrzeug(fahrzeug: VehicleCreate):
     try:
         # Versuche BigQuery
         bigquery_success = await save_vehicle_to_bigquery(fahrzeug.dict())
-        
+
         # Fallback: In-Memory speichern
         if not bigquery_success:
             logger.warning("BigQuery nicht verfügbar, speichere in Memory")
             vehicles_db[fahrzeug.fin] = {
                 **fahrzeug.dict(),
-                "erstellt_am": datetime.now().isoformat()
+                "erstellt_am": datetime.now().isoformat(),
             }
-        
+
         return {
             "message": "Fahrzeug erfolgreich angelegt",
             "fin": fahrzeug.fin,
-            "storage": "bigquery" if bigquery_success else "memory"
+            "storage": "bigquery" if bigquery_success else "memory",
         }
-        
+
     except Exception as e:
         logger.error(f"Error creating vehicle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/fahrzeuge")
 async def list_fahrzeuge():
@@ -151,45 +159,45 @@ async def list_fahrzeuge():
             """
             result = bq_client.query(query)
             vehicles = [dict(row) for row in result]
-            
+
             return {
                 "fahrzeuge": vehicles,
                 "anzahl": len(vehicles),
-                "source": "bigquery"
+                "source": "bigquery",
             }
         except Exception as e:
             logger.error(f"BigQuery query error: {e}")
-    
+
     # Fallback: Memory
     return {
         "fahrzeuge": list(vehicles_db.values()),
         "anzahl": len(vehicles_db),
-        "source": "memory"
+        "source": "memory",
     }
+
 
 @app.get("/test/bigquery")
 async def test_bigquery():
     """BigQuery Verbindung testen"""
     if not bq_client:
         return {"status": "BigQuery Client nicht verfügbar"}
-    
+
     try:
         # Einfache Test-Query
         query = "SELECT 1 as test"
         result = bq_client.query(query)
         list(result)  # Query ausführen
-        
+
         return {
             "status": "BigQuery Verbindung erfolgreich",
             "project": bq_client.project,
-            "location": bq_client.location
+            "location": bq_client.location,
         }
     except Exception as e:
-        return {
-            "status": "BigQuery Fehler", 
-            "error": str(e)
-        }
+        return {"status": "BigQuery Fehler", "error": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8080)
