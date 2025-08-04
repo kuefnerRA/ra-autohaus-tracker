@@ -1,0 +1,21 @@
+# Basis Web Framework (funktioniert sicher mit Python 3.12)
+fastapi
+uvicorn[standard]
+
+# Data Validation
+pydantic
+python-multipart
+
+# HTTP & Utilities
+requests
+httpx
+python-dotenv
+
+# Google Cloud (ohne feste Versionen - nimmt automatisch kompatible)
+google-cloud-bigquery
+google-cloud-logging
+
+# Development Tools
+pytest
+black
+flake8
