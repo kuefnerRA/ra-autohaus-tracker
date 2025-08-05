@@ -1,62 +1,15 @@
-# Development
 venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.log
-
-# Git
 .git/
 .gitignore
-
-# IDE
+README.md
 .vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
+tests/
+docs/
+*.log
+.env
+*.backup
+node_modules/
 .DS_Store
 Thumbs.db
-
-# Documentation
-docs/
-README.md
-*.md
-
-# Testing
-tests/
-.pytest_cache/
-
-# Backup files
-*.backup
-*.old
-
-# Temporary files
-tmp/
-temp/
-.tmp/
-
-# Environment files
-.env
-*.env
-
-# Node modules (falls vorhanden)
-node_modules/
-
-# Build artifacts
-build/
-dist/
-*.egg-info/
