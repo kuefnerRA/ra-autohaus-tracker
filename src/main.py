@@ -886,50 +886,64 @@ async def get_gwa_warteschlange_api():
 
     return {"gwa_warteschlange": [], "source": "bigquery_unavailable"}
 
-# 6 Hauptprozesse Definition
+# 6 Hauptprozesse - Vereinfachte Endpoints
 HAUPTPROZESSE = ["Einkauf", "Anlieferung", "Aufbereitung", "Foto", "Werkstatt", "Verkauf"]
+SLA_DEFINITIONEN = {
+    "Einkauf": 14,
+    "Anlieferung": 7, 
+    "Aufbereitung": 2,
+    "Foto": 3,
+    "Werkstatt": 10,
+    "Verkauf": 30
+}
 
-@app.get("/info/hauptprozesse")
-async def get_hauptprozesse():
-    """Zeigt die 6 Hauptprozesse mit SLA-Definitionen"""
+@app.get("/info/prozesse")
+async def get_prozess_info():
+    """6 Hauptprozesse mit SLA-Definitionen"""
     return {
         "hauptprozesse": HAUPTPROZESSE,
-        "sla_definitionen": {
-            "Einkauf": 14,
-            "Anlieferung": 7,
-            "Aufbereitung": 2, 
-            "Foto": 3,
-            "Werkstatt": 10,
-            "Verkauf": 30
-        },
-        "flowers_schlüsselbegriffe": {
+        "sla_tage": SLA_DEFINITIONEN,
+        "flowers_schlüssel": {
             "einkauf": "Einkauf",
-            "anlieferung": "Anlieferung",
-            "aufbereitung": "Aufbereitung", 
+            "anlieferung": "Anlieferung", 
+            "aufbereitung": "Aufbereitung",
             "foto": "Foto",
-            "werkstatt": "Werkstatt",
+            "werkstatt": "Werkstatt", 
             "verkauf": "Verkauf"
         }
     }
 
-def validate_prozess_typ(prozess_typ: str) -> str:
-    """Validiert Prozesstyp gegen 6 Hauptprozesse"""
-    if prozess_typ in HAUPTPROZESSE:
-        return prozess_typ
-    
-    # Mapping für Flowers-Integration
-    mapping = {
-        'einkauf': 'Einkauf',
-        'anlieferung': 'Anlieferung',
-        'aufbereitung': 'Aufbereitung',
-        'foto': 'Foto', 
-        'werkstatt': 'Werkstatt',
-        'verkauf': 'Verkauf'
-    }
-    
-    normalized = mapping.get(prozess_typ.lower())
-    if normalized:
-        return normalized
-    
-    raise ValueError(f"Unbekannter Prozesstyp: {prozess_typ}. Erlaubt: {HAUPTPROZESSE}")
-
+@app.get("/dashboard/sla-status")
+async def get_sla_status():
+    """SLA-Status aller aktiven Prozesse"""
+    if bq_client:
+        try:
+            query = """
+            SELECT 
+                prozess_typ,
+                COUNT(*) as total,
+                SUM(CASE WHEN sla_status = 'SLA_VERLETZT' THEN 1 ELSE 0 END) as verletzt,
+                SUM(CASE WHEN sla_status = 'SLA_RISIKO' THEN 1 ELSE 0 END) as risiko,
+                SUM(CASE WHEN sla_status = 'SLA_OK' THEN 1 ELSE 0 END) as ok
+            FROM `ra-autohaus-tracker.autohaus.prozesse_sla_einfach`
+            WHERE status IN ('gestartet', 'in_bearbeitung', 'warteschlange')
+            GROUP BY prozess_typ
+            ORDER BY 
+                CASE prozess_typ 
+                    WHEN 'Einkauf' THEN 1
+                    WHEN 'Anlieferung' THEN 2
+                    WHEN 'Aufbereitung' THEN 3
+                    WHEN 'Foto' THEN 4
+                    WHEN 'Werkstatt' THEN 5
+                    WHEN 'Verkauf' THEN 6
+                END
+            """
+            result = bq_client.query(query)
+            sla_status = [dict(row) for row in result]
+            return {
+                "sla_overview": sla_status,
+                "source": "bigquery"
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    return {"sla_overview": [], "source": "bigquery_unavailable"}
