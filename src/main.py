@@ -885,3 +885,51 @@ async def get_gwa_warteschlange_api():
             return {"error": str(e)}
 
     return {"gwa_warteschlange": [], "source": "bigquery_unavailable"}
+
+# 6 Hauptprozesse Definition
+HAUPTPROZESSE = ["Einkauf", "Anlieferung", "Aufbereitung", "Foto", "Werkstatt", "Verkauf"]
+
+@app.get("/info/hauptprozesse")
+async def get_hauptprozesse():
+    """Zeigt die 6 Hauptprozesse mit SLA-Definitionen"""
+    return {
+        "hauptprozesse": HAUPTPROZESSE,
+        "sla_definitionen": {
+            "Einkauf": 14,
+            "Anlieferung": 7,
+            "Aufbereitung": 2, 
+            "Foto": 3,
+            "Werkstatt": 10,
+            "Verkauf": 30
+        },
+        "flowers_schlüsselbegriffe": {
+            "einkauf": "Einkauf",
+            "anlieferung": "Anlieferung",
+            "aufbereitung": "Aufbereitung", 
+            "foto": "Foto",
+            "werkstatt": "Werkstatt",
+            "verkauf": "Verkauf"
+        }
+    }
+
+def validate_prozess_typ(prozess_typ: str) -> str:
+    """Validiert Prozesstyp gegen 6 Hauptprozesse"""
+    if prozess_typ in HAUPTPROZESSE:
+        return prozess_typ
+    
+    # Mapping für Flowers-Integration
+    mapping = {
+        'einkauf': 'Einkauf',
+        'anlieferung': 'Anlieferung',
+        'aufbereitung': 'Aufbereitung',
+        'foto': 'Foto', 
+        'werkstatt': 'Werkstatt',
+        'verkauf': 'Verkauf'
+    }
+    
+    normalized = mapping.get(prozess_typ.lower())
+    if normalized:
+        return normalized
+    
+    raise ValueError(f"Unbekannter Prozesstyp: {prozess_typ}. Erlaubt: {HAUPTPROZESSE}")
+
