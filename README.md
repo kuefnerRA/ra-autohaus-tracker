@@ -1,90 +1,53 @@
 # RA Autohaus Tracker
 
-Multi-Source Fahrzeugprozess-Tracking-System für Reinhardt Automobile.
+Dieses Projekt wurde aufgeräumt und modernisiert. Die wichtigsten Änderungen:
 
-## Features
+- **Zentrale Konfiguration** in `.env` (Projekt, Region, Service, Registry, Umgebung, Tag)
+- **Gemeinsame Variablen & Defaults** in `common.sh`
+- **Einheitliches Deployment** über `scripts/deploy.sh` (statt mehrere Einzelskripte)
+- **SLA-Logik DRY**: Ausgelagert in `sql/00_schema/10_sla_ref.sql` und `sql/10_views/20_prozesse_mit_sla.sql`
+- **Robuste Tests & Linting** über `scripts/test.sh`
+- **Entwicklung lokal** über `scripts/start_dev.sh`
+- **SQL-Einspielung** über `scripts/sql_apply.sh`
 
-- 🚗 Fahrzeug-Stammdatenmanagement
-- 📊 Prozess-Tracking (Transport, Aufbereitung, Werkstatt, Foto, etc.)
-- 📧 Multi-Source Datenintegration (E-Mail, Webhooks, Zapier)
-- ⏱️ SLA-Monitoring und Alerts
-- 📈 Dashboard mit Warteschlangen und KPIs
-- ☁️ Cloud-native Architektur (Google Cloud)
+## Setup
 
-## Technologie-Stack
-
-- **Backend**: Python FastAPI
-- **Datenbank**: Google BigQuery
-- **Hosting**: Google Cloud Run
-- **Frontend**: Looker Studio Dashboards
-- **CI/CD**: GitHub Actions
-
-## Entwicklung
-
-### Voraussetzungen
-- Python 3.11+
-- Google Cloud CLI
-- Docker (optional)
-
-### Setup
 ```bash
-# Repository klonen
-git clone https://github.com/kuefnerRA/ra-autohaus-tracker.git
+# Repo klonen
+git clone <repo-url>
 cd ra-autohaus-tracker
 
-# Entwicklungsumgebung einrichten
-./scripts/setup_local.sh
-
-# Virtual Environment aktivieren
-source venv/bin/activate
-
-# Development Server starten
-uvicorn src.main:app --reload
+# .env anpassen
+cp .env.example .env
+nano .env
 ```
-
-### API Dokumentation
-- Lokale Entwicklung: http://localhost:8080/docs
-- Test-Umgebung: TBD
-- Produktion: TBD
 
 ## Deployment
 
-### Test-Umgebung
 ```bash
-./scripts/deploy_test.sh
+# Build & Push & Deploy (Artifact Registry)
+TAG=test ./scripts/deploy.sh build
+./scripts/deploy.sh push
+ENVIRONMENT=test ./scripts/deploy.sh run
+
+# Oder direkt aus Source deployen
+./scripts/deploy.sh source
 ```
 
-### Produktion
+## SQL anwenden
+
 ```bash
-./scripts/deploy_prod.sh
+./scripts/sql_apply.sh
 ```
 
-## Architektur
+## Lint & Tests
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Flowers SW    │    │    Audaris      │    │   AutoCRM       │
-│   (E-Mail/API)  │    │     (API)       │    │    (API)        │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                    ┌─────────────┴───────────┐
-                    │   Cloud Run API         │
-                    │   (FastAPI)             │
-                    └─────────────┬───────────┘
-                                  │
-                    ┌─────────────┴───────────┐
-                    │   BigQuery              │
-                    │   (Data Warehouse)      │
-                    └─────────────┬───────────┘
-                                  │
-                    ┌─────────────┴───────────┐
-                    │   Looker Studio         │
-                    │   (Dashboards)          │
-                    └─────────────────────────┘
+```bash
+./scripts/test.sh
 ```
 
-## Lizenz
+## Lokal entwickeln
 
-Proprietär - Reinhardt Automobile GmbH
+```bash
+PORT=8080 ./scripts/start_dev.sh
+```
