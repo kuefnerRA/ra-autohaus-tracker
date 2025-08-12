@@ -1,16 +1,17 @@
 CREATE OR REPLACE VIEW `ra-autohaus-tracker.autohaus.prozesse_mit_sla` AS
 SELECT
-  p.*,
-  r.sla_tage,
+  p.*,  -- bestehende Spalten unverändert lassen
+  COALESCE(r.sla_tage, p.sla_tage) AS sla_tage_berechnet,
   CASE 
     WHEN p.start_timestamp IS NOT NULL 
-    THEN DATE_ADD(DATE(p.start_timestamp), INTERVAL r.sla_tage DAY)
+      THEN DATE_ADD(DATE(p.start_timestamp), INTERVAL COALESCE(r.sla_tage, p.sla_tage) DAY)
     ELSE NULL
-  END AS sla_faellig_am,
+  END AS sla_faellig_am_berechnet,
   CASE 
     WHEN p.start_timestamp IS NOT NULL
-    THEN DATE_DIFF(CURRENT_DATE(), DATE(p.start_timestamp), DAY)
+      THEN DATE_DIFF(CURRENT_DATE(), DATE(p.start_timestamp), DAY)
     ELSE NULL
-  END AS standzeit_tage
-FROM `ra-autohaus-tracker.autohaus.fahrzeug_prozesse` p
-LEFT JOIN `ra-autohaus-tracker.autohaus.sla_ref` r USING (prozess_typ);
+  END AS standzeit_tage_berechnet
+FROM `ra-autohaus-tracker.autohaus.fahrzeug_prozesse` AS p
+LEFT JOIN `ra-autohaus-tracker.autohaus.sla_ref` AS r
+USING (prozess_typ);
