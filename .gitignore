@@ -58,3 +58,58 @@ Thumbs.db
 tmp/
 data/
 *.backup
+*.pyo
+*.pyd
+env.bak/
+venv.bak/
+# Distribution / packaging
+bin/
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+# Unit test / coverage reports
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+# Jupyter Notebook
+.ipynb_checkpoints
+# pyenv
+.python-version
+# dotenv
+.env.*
+!.env.example
+# virtualenv
+.venv
+# IDEs and editors
+*.sublime-project
+*.sublime-workspace
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+# Pyre type checker
+.pyre/
+# Pytype
+.pytype/
+# Cython debug symbols
+cython_debug/
+# Custom project ignores
+# Exclude ZIPs, temp backups, duplicate folders
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*backup*
+*.bak
+*.tmp
+src (2)/
+scripts (2)/
+config (2)/
+temp/
