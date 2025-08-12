@@ -1,17 +1,22 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../common.sh
+source "$DIR/../common.sh"
 
-echo "🚀 RA Autohaus Tracker Development Server"
+# Optional venv
+[[ -d "$DIR/../venv" ]] && source "$DIR/../venv/bin/activate" || true
 
-# Virtual Environment aktivieren
-source venv/bin/activate
+export PYTHONPATH="${PYTHONPATH:-$(cd "$DIR/.."; pwd)}"
+export ENVIRONMENT="${ENVIRONMENT:-development}"
+export GCP_PROJECT_ID="${PROJECT_ID}"
+PORT="${PORT:-8080}"
 
-# Environment Variables
-export PYTHONPATH=$(pwd)
-export ENVIRONMENT=development
-export GCP_PROJECT_ID=ra-autohaus-tracker
+echo "🚀 Dev-Server http://localhost:${PORT} (ENV=${ENVIRONMENT})"
+echo "📖 Docs: http://localhost:${PORT}/docs"
 
-echo "🌐 Starting server on http://localhost:8080"
-echo "📖 API Docs: http://localhost:8080/docs"
+if ! command -v uvicorn >/dev/null 2>&1; then
+  echo "ℹ️ uvicorn nicht gefunden – versuche Installation"
+  pip install -q uvicorn || true
+fi
 
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8080
+uvicorn src.main:app --reload --host 0.0.0.0 --port "${PORT}"
