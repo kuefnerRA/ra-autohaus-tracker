@@ -1,0 +1,35 @@
+# Cloud Build using Artifact Registry
+# gcloud builds submit --config cloudbuild.ar.yaml --substitutions=_TAG=ci-$(date +%Y%m%d%H%M%S)
+
+substitutions:
+  _REGION: 'europe-west3'
+  _PROJECT_ID: '$PROJECT_ID'     # von Cloud Build gesetzt
+  _REPO: 'apps'
+  _SERVICE_NAME: 'ra-autohaus-tracker'
+  _TAG: 'ci-${SHORT_SHA}'
+  _IMAGE_URI: '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_SERVICE_NAME}'
+  _ENVIRONMENT: 'production'
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '${_IMAGE_URI}:${_TAG}', '.']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_IMAGE_URI}:${_TAG}']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - '${_SERVICE_NAME}'
+      - '--image=${_IMAGE_URI}:${_TAG}'
+      - '--region=${_REGION}'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=ENVIRONMENT=${_ENVIRONMENT},PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},SERVICE_NAME=${_SERVICE_NAME},GCP_PROJECT_ID=${_PROJECT_ID}'
+
+images:
+  - '${_IMAGE_URI}:${_TAG}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

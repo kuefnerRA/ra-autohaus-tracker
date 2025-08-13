@@ -25,6 +25,9 @@ fi
 
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE_NAME}"
 
+# Backward compatibility for legacy code that still expects GCP_PROJECT_ID
+export GCP_PROJECT_ID="${PROJECT_ID}"
+
 check_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "❌ '$1' ist nicht installiert oder nicht im PATH"; exit 1; }
 }

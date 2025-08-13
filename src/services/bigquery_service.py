@@ -13,7 +13,7 @@ class BigQueryService:
     def __init__(self):
         try:
             self.client = bigquery.Client()
-            self.project_id = os.getenv("GCP_PROJECT_ID", "ra-autohaus-tracker")
+            self.project_id = (os.getenv("PROJECT_ID") or os.getenv("GCP_PROJECT_ID") or "ra-autohaus-tracker")
             self.dataset_id = "autohaus"
             logger.info("✅ BigQuery Service initialized")
         except Exception as e:
