@@ -130,3 +130,9 @@ config/legacy_backup/
 
 # Build/Tool marker files
 *.identifier
+
+# Windows Alternate Data Streams (tauchen in WSL als Dateien auf)
+*:[Zz]one.Identifier*
+
+# Lokale/umgebungsspezifische env-Dateien im config/
+config/*.env
