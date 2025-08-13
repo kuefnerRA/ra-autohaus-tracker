@@ -1,53 +1,71 @@
 # RA Autohaus Tracker
 
-Dieses Projekt wurde aufgeräumt und modernisiert. Die wichtigsten Änderungen:
+Ein internes Tool zur Erfassung, Analyse und Auswertung von Prozessen im Autohaus.  
+Es ermöglicht die Erfassung von Fahrzeugprozessen, SLA-Überwachung und Bereitstellung von Daten über eine API, die auf **Google Cloud Run** gehostet wird.
 
-- **Zentrale Konfiguration** in `.env` (Projekt, Region, Service, Registry, Umgebung, Tag)
-- **Gemeinsame Variablen & Defaults** in `common.sh`
-- **Einheitliches Deployment** über `scripts/deploy.sh` (statt mehrere Einzelskripte)
-- **SLA-Logik DRY**: Ausgelagert in `sql/00_schema/10_sla_ref.sql` und `sql/10_views/20_prozesse_mit_sla.sql`
-- **Robuste Tests & Linting** über `scripts/test.sh`
-- **Entwicklung lokal** über `scripts/start_dev.sh`
-- **SQL-Einspielung** über `scripts/sql_apply.sh`
+## 🚀 Deployment
 
-## Setup
+Für eine Schritt-für-Schritt-Anleitung zum Build, Test und Deployment siehe:
+
+➡ [Deploy-Checkliste](docs/DEPLOY_CHECKLIST.md)
+
+Diese Checkliste enthält:
+- Vorbereitung der Google Cloud Authentifizierung
+- Build & Push zu Artifact Registry
+- Deployment in Test- und Produktionsumgebung
+- Ausführung der SQL-Skripte
+- Lokale Tests
+- Nachbereitung & Commits
+
+## 📦 Voraussetzungen
+
+- [Python 3.11+](https://www.python.org/downloads/)
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
+- Zugriff auf das GCP-Projekt `ra-autohaus-tracker`
+- Docker installiert und lauffähig
+- BigQuery-Berechtigungen (Lesen/Schreiben im Dataset `autohaus`)
+
+## 🛠 Installation (lokal)
 
 ```bash
-# Repo klonen
-git clone <repo-url>
+# Repository klonen
+git clone git@github.com:kuefnerRA/ra-autohaus-tracker.git
 cd ra-autohaus-tracker
 
-# .env anpassen
+# Virtuelle Umgebung erstellen
+python3 -m venv venv
+source venv/bin/activate   # oder .\venv\Scripts\activate auf Windows
+
+# Abhängigkeiten installieren
+pip install -r requirements.txt
+
+# .env aus Vorlage erstellen und anpassen
 cp .env.example .env
-nano .env
 ```
 
-## Deployment
+## ▶ Lokale Entwicklung starten
 
 ```bash
-# Build & Push & Deploy (Artifact Registry)
-TAG=test ./scripts/deploy.sh build
-./scripts/deploy.sh push
-ENVIRONMENT=test ./scripts/deploy.sh run
-
-# Oder direkt aus Source deployen
-./scripts/deploy.sh source
+PORT=8080 ./scripts/start_dev.sh
 ```
+Danach im Browser öffnen:  
+- API-Dokumentation: `http://localhost:8080/docs`  
+- Health-Check: `http://localhost:8080/health`
 
-## SQL anwenden
-
-```bash
-./scripts/sql_apply.sh
-```
-
-## Lint & Tests
+## 🧪 Tests
 
 ```bash
 ./scripts/test.sh
 ```
 
-## Lokal entwickeln
+## 💾 SQL-Updates anwenden
 
+Alle relevanten Tabellen, Views und Änderungen in BigQuery anwenden:
 ```bash
-PORT=8080 ./scripts/start_dev.sh
+./scripts/sql_apply.sh
 ```
+
+## 📜 Lizenz
+
+Dieses Projekt ist proprietär und intern für **Reinhardt Automobile GmbH** bestimmt.  
+Keine externe Nutzung oder Weitergabe ohne ausdrückliche Genehmigung.
