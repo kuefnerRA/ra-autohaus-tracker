@@ -1,0 +1,127 @@
+From 3f2d3c2f0a7b2a1b0c0d1e2f3a4b5c6d7e8f9a0b Mon Sep 17 00:00:00 2001
+From: Thomas Setup <kuefner@reinhardtautomobile.de>
+Date: Wed, 13 Aug 2025 10:42:00 +0200
+Subject: [PATCH] chore: standardize PROJECT_ID usage, add AR cloudbuild,
+ add dynamic BigQuery setup, and compat export in common.sh
+
+---
+ src/services/bigquery_service.py           | 13 +++++++++++--
+ common.sh                                  |  4 ++++
+ cloudbuild.ar.yaml                         | 49 ++++++++++++++++++++++++++++++
+ scripts/setup_bigquery_dynamic.sh          | 27 ++++++++++++++++++
+ 4 files changed, 91 insertions(+), 2 deletions(-)
+ create mode 100644 cloudbuild.ar.yaml
+ create mode 100755 scripts/setup_bigquery_dynamic.sh
+
+diff --git a/src/services/bigquery_service.py b/src/services/bigquery_service.py
+index 1111111..2222222 100644
+--- a/src/services/bigquery_service.py
++++ b/src/services/bigquery_service.py
+@@ -1,20 +1,29 @@
+ import os
+ 
+ class BigQueryService:
+     def __init__(self):
+-        self.project_id = os.getenv("GCP_PROJECT_ID", "ra-autohaus-tracker")
++        # Prefer PROJECT_ID; keep GCP_PROJECT_ID as backward-compatible fallback;
++        # final fallback helps local runs without .env
++        self.project_id = (
++            os.getenv("PROJECT_ID")
++            or os.getenv("GCP_PROJECT_ID")
++            or "ra-autohaus-tracker"
++        )
+ 
+         # ... keep other initializations as they are
+ 
+diff --git a/common.sh b/common.sh
+index 3333333..4444444 100755
+--- a/common.sh
++++ b/common.sh
+@@ -20,6 +20,10 @@
+ : "${ENVIRONMENT:=dev}"
+ 
+ IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE_NAME}"
++
++# Backward compatibility for legacy shell/python code that still uses GCP_PROJECT_ID
++# (PROJECT_ID remains the canonical variable everywhere)
++export GCP_PROJECT_ID="${PROJECT_ID}"
+ 
+ check_cmd() {
+   command -v "$1" >/dev/null 2>&1 || { echo "❌ '$1' ist nicht installiert oder nicht im PATH"; exit 1; }
+diff --git a/cloudbuild.ar.yaml b/cloudbuild.ar.yaml
+new file mode 100644
+index 0000000..5555555
+--- /dev/null
++++ b/cloudbuild.ar.yaml
+@@ -0,0 +1,49 @@
++# Cloud Build configuration using Artifact Registry instead of GCR
++# Usage:
++#   gcloud builds submit --config cloudbuild.ar.yaml --substitutions=_TAG=ci-$(date +%Y%m%d%H%M%S)
++
++substitutions:
++  _REGION: 'europe-west3'
++  _PROJECT_ID: '$PROJECT_ID'     # Cloud Build injects $PROJECT_ID
++  _REPO: 'apps'
++  _SERVICE_NAME: 'ra-autohaus-tracker'
++  _TAG: 'ci-${SHORT_SHA}'
++  _IMAGE_URI: '${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_SERVICE_NAME}'
++  _ENVIRONMENT: 'production'
++
++steps:
++  - name: 'gcr.io/cloud-builders/docker'
++    args:
++      - build
++      - -t
++      - '${_IMAGE_URI}:${_TAG}'
++      - .
++
++  - name: 'gcr.io/cloud-builders/docker'
++    args:
++      - push
++      - '${_IMAGE_URI}:${_TAG}'
++
++  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
++    entrypoint: gcloud
++    args:
++      - run
++      - deploy
++      - '${_SERVICE_NAME}'
++      - '--image=${_IMAGE_URI}:${_TAG}'
++      - '--region=${_REGION}'
++      - '--allow-unauthenticated'
++      - '--set-env-vars=ENVIRONMENT=${_ENVIRONMENT},PROJECT_ID=${_PROJECT_ID},REGION=${_REGION},SERVICE_NAME=${_SERVICE_NAME},GCP_PROJECT_ID=${_PROJECT_ID}'
++
++images:
++  - '${_IMAGE_URI}:${_TAG}'
++
++options:
++  logging: CLOUD_LOGGING_ONLY
+diff --git a/scripts/setup_bigquery_dynamic.sh b/scripts/setup_bigquery_dynamic.sh
+new file mode 100755
+index 0000000..6666666 100755
+--- /dev/null
++++ b/scripts/setup_bigquery_dynamic.sh
+@@ -0,0 +1,27 @@
++#!/usr/bin/env bash
++set -Eeuo pipefail
++IFS=$'\n\t'
++
++DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++# shellcheck source=../common.sh
++source "$DIR/../common.sh"
++
++check_cmd bq
++
++echo "🛠  BigQuery setup"
++echo "Project: ${PROJECT_ID}"
++echo "Region : ${REGION}"
++
++# Example: create dataset if it does not exist
++bq --location="${REGION}" --project_id="${PROJECT_ID}" \
++   mk -d --default_table_expiration 0 autohaus || true
++
++# You can append more bq commands below, now parameterized with ${PROJECT_ID}/${REGION}
++echo "✅ BigQuery setup completed (idempotent)"
++
+-- 
+2.43.0
