@@ -1,9 +1,15 @@
+# ===============================
 # Python
+# ===============================
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
 *.so
 .Python
+
+# Distribution / packaging
 build/
 develop-eggs/
 dist/
@@ -21,95 +27,106 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+bin/                      # falls erstellt
 
-# Virtual Environment
-venv/
-env/
-ENV/
-
-# Environment Variables
-.env
-*.env
-config/local.env
-
-# Google Cloud
-key.json
-service-account-key.json
-*-key.json
-
-# IDE
-.vscode/settings.json
-.idea/
-
-# Logs
-*.log
-logs/
-
-# Testing
-.coverage
-.pytest_cache/
-htmlcov/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-tmp/
-data/
-*.backup
-*.pyo
-*.pyd
-env.bak/
-venv.bak/
-# Distribution / packaging
-bin/
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
-# Unit test / coverage reports
+
+# ===============================
+# Virtual Environments
+# ===============================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ===============================
+# Environment files
+# ===============================
+.env
+.env.*
+!.env.example
+*.env
+config/local.env
+
+# ===============================
+# Google Cloud / Credentials
+# ===============================
+key.json
+service-account-key.json
+*-key.json
+gcloud-config/
+
+# ===============================
+# Docker
+# ===============================
+.docker/
+docker-compose.override.yml
+
+# ===============================
+# Tests / Coverage / Hypothesis
+# ===============================
 .tox/
 .nox/
+.coverage
 .coverage.*
-.cache
-nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+.pytest_cache/
 .hypothesis/
-# Jupyter Notebook
-.ipynb_checkpoints
-# pyenv
-.python-version
-# dotenv
-.env.*
-!.env.example
-# virtualenv
-.venv
-# IDEs and editors
+htmlcov/
+.cache
+
+# ===============================
+# IDE / Editor
+# ===============================
+.vscode/                 # statt nur .vscode/settings.json = alles local
+.idea/
 *.sublime-project
 *.sublime-workspace
-# mypy
+*.swp
+*~
+
+# ===============================
+# Type Checkers
+# ===============================
 .mypy_cache/
 .dmypy.json
 dmypy.json
-# Pyre type checker
 .pyre/
-# Pytype
 .pytype/
-# Cython debug symbols
 cython_debug/
-# Custom project ignores
-# Exclude ZIPs, temp backups, duplicate folders
+
+# ===============================
+# OS / Misc
+# ===============================
+.DS_Store
+Thumbs.db
+*.log
+logs/
+
+# ===============================
+# Project specific
+# ===============================
+tmp/
+data/
+*.backup
+*.bak
+*.tmp
 *.zip
 *.tar
 *.tar.gz
 *.tgz
 *.rar
-*backup*
-*.bak
-*.tmp
 src (2)/
 scripts (2)/
 config (2)/
 temp/
+config/legacy_backup/
+
+# Build/Tool marker files
+*.identifier
