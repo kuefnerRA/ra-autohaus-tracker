@@ -1,0 +1,57 @@
+# tests/test_integration.py
+import pytest
+from unittest.mock import Mock, patch
+from fastapi.testclient import TestClient
+from src.main import app
+
+@pytest.fixture
+def client_with_mock_bq():
+    with patch('src.main.bq_client') as mock_bq:
+        mock_bq.query.return_value = [{"count": 5}]
+        mock_bq.get_table.return_value = Mock()
+        mock_bq.insert_rows_json.return_value = []  # Kein Fehler
+        
+        client = TestClient(app)
+        yield client, mock_bq
+
+@pytest.mark.integration
+def test_vehicle_creation_flow(client_with_mock_bq):
+    client, mock_bq = client_with_mock_bq
+    
+    vehicle_data = {
+        "fin": "WBA12345678901234",
+        "marke": "BMW",
+        "modell": "320d",
+        "antriebsart": "Diesel",
+        "farbe": "Schwarz",
+        "baujahr": 2022
+    }
+    
+    response = client.post("/fahrzeuge", json=vehicle_data)
+    assert response.status_code == 201
+    
+    data = response.json()
+    assert data["fin"] == vehicle_data["fin"]
+    assert "storage" in data
+    
+    # Überprüfen, dass BigQuery aufgerufen wurde
+    mock_bq.insert_rows_json.assert_called_once()
+
+@pytest.mark.integration
+def test_flowers_webhook_integration(client_with_mock_bq):
+    client, mock_bq = client_with_mock_bq
+    
+    webhook_data = {
+        "fahrzeug_id": "WBA12345678901234",
+        "fin": "WBA12345678901234",
+        "prozess": "gwa",
+        "status": "gestartet",
+        "bearbeiter": "Thomas K."
+    }
+    
+    response = client.post("/integration/flowers/webhook", json=webhook_data)
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert data["prozess"] == "Aufbereitung"  # Gemappt von "gwa"
+    assert data["fin"] == webhook_data["fin"]

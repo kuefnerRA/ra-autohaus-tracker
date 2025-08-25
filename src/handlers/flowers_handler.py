@@ -18,12 +18,20 @@ class FlowersHandler:
         
         # Prozesstyp-Mapping - 6 Hauptprozesse mit festen Schlüsselbegriffen
         self.process_mapping = {
+            # 6 Standard-Hauptprozesse (bestehend)
             'einkauf': 'Einkauf',
             'anlieferung': 'Anlieferung', 
             'aufbereitung': 'Aufbereitung',
             'foto': 'Foto',
             'werkstatt': 'Werkstatt',
-            'verkauf': 'Verkauf'
+            'verkauf': 'Verkauf',
+            
+            # Flowers-Legacy-Begriffe hinzufügen
+            'gwa': 'Aufbereitung',           
+            'garage': 'Werkstatt',          
+            'fotoshooting': 'Foto',         
+            'transport': 'Anlieferung',     
+            'ankauf': 'Einkauf'             
         }
         
         # E-Mail-Patterns für Flowers
@@ -34,6 +42,13 @@ class FlowersHandler:
             'status_update': r'Status:\s+(\w{17})\s+(\w+)\s+->\s+(\w+)\s+durch\s+(.+)'
         }
 
+    # 🔧 HIER DIE NEUE METHODE EINFÜGEN:
+    def normalize_prozess_typ(self, prozess_input: str) -> str:
+        """Normalisiert Prozesstyp auf 6 Hauptprozesse (zentrale Methode)"""
+        normalized = self.process_mapping.get(prozess_input.lower(), prozess_input)
+        logger.debug(f"Prozess-Mapping: '{prozess_input}' → '{normalized}'")
+        return normalized
+    
     async def parse_flowers_email(self, email_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parst Flowers E-Mail und extrahiert Fahrzeug- und Prozessdaten"""
         try:
@@ -200,3 +215,20 @@ class FlowersHandler:
             "message": f"Status-Update für {fin} ({prozess_typ}) verarbeitet",
             "source": source
         }
+    
+    @staticmethod
+    def extract_fin_from_text(text: str) -> Optional[str]:
+        """Zentrale FIN-Extraktion für alle Handler"""
+        # Erst versuchen mit "FIN:" Label (bevorzugt)
+        fin_pattern_labeled = re.compile(r'FIN:\s*([A-Z0-9]{15,17})', re.IGNORECASE)
+        match = fin_pattern_labeled.search(text)
+        if match:
+            return match.group(1)
+        
+        # Fallback: Nackte 17-stellige FIN
+        fin_pattern_naked = re.compile(r'\b([A-HJ-NPR-Z0-9]{17})\b')
+        match = fin_pattern_naked.search(text.upper())
+        if match:
+            return match.group(1)
+        
+        return None

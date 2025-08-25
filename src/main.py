@@ -1,13 +1,30 @@
+import importlib
+import sys
 import logging
 import os
 import uuid
 import json
 import re
+import imaplib
+import email
+
+from email.header import decode_header
+
+from bs4 import BeautifulSoup
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
 from datetime import date, datetime
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field, validator
+
+# .env Datei laden
+from dotenv import load_dotenv
+load_dotenv()
+
+from src.handlers.flowers_handler import FlowersHandler
 
 # BigQuery direkt importieren
 try:
@@ -39,6 +56,13 @@ if BIGQUERY_AVAILABLE:
         bq_client = None
 else:
     bq_client = None
+
+# Handler-Instanz erstellen (NACH bq_client)
+if BIGQUERY_AVAILABLE and bq_client:
+    flowers_handler = FlowersHandler(bigquery_service=None)  # Vorerst None
+else:
+    flowers_handler = FlowersHandler(bigquery_service=None)
+
 
 # In-Memory Fallback
 vehicles_db = {}
@@ -79,7 +103,10 @@ class FlowersWebhookData(BaseModel):
     timestamp: Optional[datetime] = None
     zusatz_daten: Optional[Dict[str, Any]] = {}
     
-    @validator('prozess')
+    from pydantic import field_validator
+
+    @field_validator('prozess')
+    @classmethod
     def validate_prozess(cls, v):
         """Flowers-Begriffe auf 6 Hauptprozesse mappen"""
         mapping = {
@@ -122,6 +149,13 @@ class FlowersEmailParser:
     @staticmethod
     def extract_fin_from_text(text: str) -> Optional[str]:
         """FIN aus Text extrahieren (17-stellig)"""
+        # Erst versuchen mit "FIN:" Label
+        fin_pattern_labeled = r'FIN:\s*([A-Z0-9]{15,17})'
+        matches = re.findall(fin_pattern_labeled, text.upper(), re.IGNORECASE)
+        if matches:
+            return matches[0]
+        
+        # Fallback: Nackte FIN ohne Label
         fin_pattern = r'\b[A-HJ-NPR-Z0-9]{17}\b'
         matches = re.findall(fin_pattern, text.upper())
         return matches[0] if matches else None
@@ -747,14 +781,18 @@ async def flowers_webhook(data: FlowersWebhookData, background_tasks: Background
         
         # FIN validieren/extrahieren
         fin = data.fin or FlowersEmailParser.extract_fin_from_text(data.fahrzeug_id)
-        
+
+        # HIER Handler verwenden statt direkter Wert
+        normalized_prozess = flowers_handler.normalize_prozess_typ(data.prozess)
+
+
         if not fin:
             raise HTTPException(status_code=400, detail="FIN konnte nicht ermittelt werden")
         
         # Daten verarbeiten
         result = await process_flowers_data(
             fin=fin,
-            prozess_typ=data.prozess,
+            prozess_typ=normalized_prozess,
             status=data.status,
             bearbeiter=data.bearbeiter,
             datenquelle="flowers_webhook",
@@ -769,7 +807,7 @@ async def flowers_webhook(data: FlowersWebhookData, background_tasks: Background
             return {
                 "message": "Flowers Webhook erfolgreich verarbeitet",
                 "fin": fin,
-                "prozess": data.prozess,
+                "prozess": normalized_prozess,
                 "status": data.status,
                 "bearbeiter_mapping": result.get("bearbeiter_gemappt"),
                 "fahrzeug_im_system": result["fahrzeug_existiert"]
@@ -843,9 +881,12 @@ async def zapier_webhook(data: ZapierWebhookData, background_tasks: BackgroundTa
             except:
                 timestamp = datetime.now()
         
+        # HIER Handler verwenden statt direkter Wert
+        normalized_prozess = flowers_handler.normalize_prozess_typ(data.prozess_name)
+
         result = await process_flowers_data(
             fin=data.fahrzeug_fin,
-            prozess_typ=data.prozess_name,
+            prozess_typ=normalized_prozess,
             status=data.neuer_status,
             bearbeiter=data.bearbeiter_name,
             datenquelle="zapier",
@@ -859,7 +900,7 @@ async def zapier_webhook(data: ZapierWebhookData, background_tasks: BackgroundTa
             return {
                 "message": "Zapier Webhook erfolgreich verarbeitet",
                 "fin": data.fahrzeug_fin,
-                "prozess": data.prozess_name,
+                "prozess": normalized_prozess,
                 "status": data.neuer_status
             }
         else:
@@ -1243,3 +1284,445 @@ async def clear_memory():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
+
+    # Nach den bestehenden Klassen hinzufügen:
+
+class FlowersEmailProcessor:
+    """Erweiterte E-Mail-Verarbeitung für Flowers Integration"""
+    
+    def __init__(self):
+        # E-Mail-Konfiguration aus Umgebungsvariablen
+        self.imap_server = os.getenv('EMAIL_IMAP_SERVER', 'outlook.office365.com')
+        self.email_user = os.getenv('EMAIL_USER')
+        self.email_password = os.getenv('EMAIL_PASSWORD')
+        self.flowers_sender = os.getenv('FLOWERS_SENDER_EMAIL', '')
+        
+        # Regex-Muster für erweiterte E-Mail-Parsing
+        self.fin_pattern = re.compile(r'FIN:\s*([A-Z0-9]{15,17})', re.IGNORECASE)
+        self.marke_pattern = re.compile(r'Marke:\s*([^\n\r]+)', re.IGNORECASE)
+        self.farbe_pattern = re.compile(r'Farbe:\s*([^\n\r]+)', re.IGNORECASE)
+        self.bearbeiter_pattern = re.compile(r'Bearbeiter:\s*([^\n\r]+)', re.IGNORECASE)
+        
+        # Betreff-Parsing: "GWA gestartet" → ('GWA', 'gestartet')
+        self.subject_pattern = re.compile(r'^([A-Za-z0-9_\-\s]+)\s+([A-Za-z0-9_\-\s]+)$')
+    
+    def connect_to_email(self) -> imaplib.IMAP4_SSL:
+        """Verbindung zum E-Mail-Server herstellen"""
+        try:
+            mail = imaplib.IMAP4_SSL(self.imap_server)
+            mail.login(self.email_user, self.email_password)
+            mail.select('inbox')
+            logger.info(f"E-Mail-Verbindung zu {self.imap_server} erfolgreich")
+            return mail
+        except Exception as e:
+            logger.error(f"E-Mail-Verbindung fehlgeschlagen: {e}")
+            raise
+    
+    def parse_subject_enhanced(self, subject: str) -> Tuple[str, str]:
+        """Erweiterte Betreffzeilen-Analyse: 'GWA gestartet' → ('Aufbereitung', 'gestartet')"""
+        try:
+            # Betreff dekodieren
+            decoded_subject = ""
+            for part, encoding in decode_header(subject):
+                if isinstance(part, bytes):
+                    decoded_subject += part.decode(encoding or 'utf-8')
+                else:
+                    decoded_subject += part
+            
+            # Prozess und Status extrahieren
+            match = self.subject_pattern.match(decoded_subject.strip())
+            if match:
+                raw_prozess = match.group(1).strip()
+                status = match.group(2).strip()
+                
+                # Flowers-Handler für Prozess-Normalisierung nutzen
+                normalized_prozess = flowers_handler.normalize_prozess_typ(raw_prozess)
+                
+                return normalized_prozess, status
+            else:
+                logger.warning(f"Betreff konnte nicht geparst werden: {decoded_subject}")
+                return "", ""
+                
+        except Exception as e:
+            logger.error(f"Fehler beim Parsen des Betreffs '{subject}': {e}")
+            return "", ""
+    
+    def parse_email_body_enhanced(self, body: str) -> Dict[str, str]:
+        """Erweiterte Body-Analyse mit allen Flowers-Feldern"""
+        parsed_data = {}
+        
+        # HTML entfernen falls vorhanden
+        if '<html>' in body.lower() or '<body>' in body.lower():
+            soup = BeautifulSoup(body, 'html.parser')
+            body = soup.get_text()
+        
+        # FIN extrahieren
+        fin_match = self.fin_pattern.search(body)
+        if fin_match:
+            parsed_data['fin'] = fin_match.group(1).strip()
+        
+        # Marke extrahieren
+        marke_match = self.marke_pattern.search(body)
+        if marke_match:
+            parsed_data['marke'] = marke_match.group(1).strip()
+        
+        # Farbe extrahieren
+        farbe_match = self.farbe_pattern.search(body)
+        if farbe_match:
+            parsed_data['farbe'] = farbe_match.group(1).strip()
+        
+        # Bearbeiter extrahieren (falls vorhanden)
+        bearbeiter_match = self.bearbeiter_pattern.search(body)
+        if bearbeiter_match:
+            parsed_data['bearbeiter'] = bearbeiter_match.group(1).strip()
+        
+        return parsed_data
+    
+    def process_unread_emails(self) -> List[Dict[str, any]]:
+        """Ungelesene E-Mails verarbeiten und parsen"""
+        processed_emails = []
+        
+        try:
+            mail = self.connect_to_email()
+            
+            # Nach ungelesenen E-Mails suchen
+            status, messages = mail.search(None, 'UNSEEN')
+            
+            if status != 'OK':
+                logger.error("Fehler beim Suchen nach E-Mails")
+                return processed_emails
+            
+            email_ids = messages[0].split()
+            logger.info(f"{len(email_ids)} ungelesene E-Mails gefunden")
+            
+            for email_id in email_ids:
+                try:
+                    # E-Mail abrufen
+                    status, msg_data = mail.fetch(email_id, '(RFC822)')
+                    
+                    if status != 'OK':
+                        continue
+                    
+                    raw_email = msg_data[0][1]
+                    msg = email.message_from_bytes(raw_email)
+                    
+                    # HIER DEBUG-ZEILE HINZUFÜGEN:
+                
+                    subject = msg['subject'] or ""
+                    sender = msg['from'] or ""
+                    logger.info(f"🔍 DEBUG: E-Mail Details - Betreff: '{subject}', Absender: '{sender}'")     
+                    logger.info(f"🔍 DEBUG: E-Mail Details - Betreff: '{subject}', Absender: '{sender}'")
+
+                    # NEUE DEBUG-ZEILEN HINZUFÜGEN:
+                    logger.info(f"🔍 DEBUG: Flowers sender filter: '{self.flowers_sender}'")
+
+                    # Absender-Filter prüfen
+                    if self.flowers_sender and self.flowers_sender not in sender.lower():
+                        logger.info(f"🔍 DEBUG: E-Mail übersprungen - Absender-Filter")
+                        continue
+
+                    # Betreff parsen
+                    prozess_name, status_value = self.parse_subject_enhanced(subject)
+                    logger.info(f"🔍 DEBUG: Betreff geparst - Prozess: '{prozess_name}', Status: '{status_value}'")
+
+                    if not prozess_name:
+                        logger.info(f"🔍 DEBUG: E-Mail übersprungen - Ungültiger Betreff")
+                        continue            
+
+                    # E-Mail-Objekt erstellen
+                    raw_email = msg_data[0][1]
+                    msg = email.message_from_bytes(raw_email)
+                    
+                    # Basic-Informationen extrahieren
+                    subject = msg['subject'] or ""
+                    sender = msg['from'] or ""
+                    
+                    # Absender-Filter (optional)
+                    if self.flowers_sender and self.flowers_sender not in sender.lower():
+                        continue  # Nicht von Flowers
+                    
+                    # Betreff parsen
+                    prozess_name, status_value = self.parse_subject_enhanced(subject)
+                    
+                    if not prozess_name:
+                        logger.warning(f"Ungültiger Betreff übersprungen: {subject}")
+                        continue
+                    
+                    # Body extrahieren
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/plain":
+                                body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                break
+                    else:
+                        body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+                    
+                    # Body parsen
+                    body_data = self.parse_email_body_enhanced(body)
+                    
+                    # FIN ist Pflichtfeld
+                    if 'fin' not in body_data:
+                        logger.warning(f"Keine FIN in E-Mail gefunden: {subject}")
+                        continue
+                    
+                    # Timestamp extrahieren
+                    email_date = email.utils.parsedate_tz(msg['date'])
+                    timestamp = datetime.fromtimestamp(email.utils.mktime_tz(email_date)) if email_date else datetime.now()
+                    
+                    # FlowersEmailData-kompatible Struktur erstellen
+                    processed_email = {
+                        'betreff': subject,
+                        'inhalt': body,
+                        'absender': sender,
+                        'empfangen_am': timestamp,
+                        # Erweiterte Daten
+                        'fin': body_data['fin'],
+                        'prozess_name': prozess_name,
+                        'status': status_value,
+                        'bearbeiter': body_data.get('bearbeiter'),
+                        'marke': body_data.get('marke'),
+                        'farbe': body_data.get('farbe')
+                    }
+                    
+                    processed_emails.append(processed_email)
+                    
+                    # E-Mail als gelesen markieren
+                    mail.store(email_id, '+FLAGS', '\\Seen')
+                    
+                    logger.info(f"E-Mail verarbeitet: {body_data['fin']} - {prozess_name} - {status_value}")
+                    
+                except Exception as e:
+                    logger.error(f"Fehler beim Verarbeiten der E-Mail {email_id}: {e}")
+                    continue
+            
+            mail.close()
+            mail.logout()
+            
+        except Exception as e:
+            logger.error(f"Fehler beim E-Mail-Abruf: {e}")
+        
+        return processed_emails
+
+# Globale Instanz erstellen
+email_processor = FlowersEmailProcessor()
+
+# Scheduler für automatische E-Mail-Verarbeitung
+scheduler = AsyncIOScheduler()
+
+async def scheduled_email_processing():
+    """Scheduled Task für automatische E-Mail-Verarbeitung"""
+    try:
+        processed_emails = email_processor.process_unread_emails()
+        
+        if not processed_emails:
+            logger.info("Keine neuen Flowers E-Mails gefunden")
+            return
+        
+        # Jede E-Mail über bestehenden Endpoint verarbeiten
+        for email_data in processed_emails:
+            try:
+                # FlowersEmailData-Objekt erstellen
+                flowers_email = FlowersEmailData(
+                    betreff=email_data['betreff'],
+                    inhalt=email_data['inhalt'],
+                    absender=email_data['absender'],
+                    empfangen_am=email_data['empfangen_am']
+                )
+                
+                # Über bestehenden Endpoint verarbeiten
+                result = await flowers_email_integration(flowers_email, BackgroundTasks())
+                logger.info(f"E-Mail automatisch verarbeitet: {email_data['fin']} - {result}")
+                
+            except Exception as e:
+                logger.error(f"Fehler bei automatischer E-Mail-Verarbeitung für {email_data.get('fin', 'unknown')}: {e}")
+        
+        logger.info(f"🔄 Scheduled E-Mail-Verarbeitung abgeschlossen: {len(processed_emails)} E-Mails")
+        
+    except Exception as e:
+        logger.error(f"Fehler bei scheduled E-Mail-Verarbeitung: {e}")
+
+# Startup/Shutdown Events ergänzen (nach den bestehenden @app.on_event hinzufügen)
+from contextlib import asynccontextmanager
+
+# Debug: Vereinfachte Lifespan-Implementation
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup - vereinfacht ohne E-Mail-Scheduler
+    logger.info("App startup")
+    yield
+    # Shutdown
+    logger.info("App shutdown")
+
+# === NEUE E-MAIL ENDPOINTS ===
+
+@app.post("/integration/email/process-inbox")
+async def process_inbox_manual():
+    """
+    Manuelle E-Mail-Verarbeitung aus Posteingang
+    
+    Verarbeitet alle ungelesenen Flowers-E-Mails
+    """
+    try:
+        processed_emails = email_processor.process_unread_emails()
+        
+        if not processed_emails:
+            return {
+                "status": "success",
+                "message": "Keine neuen E-Mails gefunden",
+                "processed_count": 0
+            }
+        
+        successful_count = 0
+        errors = []
+        
+        # Jede E-Mail über bestehenden flowers_email_integration verarbeiten
+        for email_data in processed_emails:
+            try:
+                flowers_email = FlowersEmailData(
+                    betreff=email_data['betreff'],
+                    inhalt=email_data['inhalt'], 
+                    absender=email_data['absender'],
+                    empfangen_am=email_data['empfangen_am']
+                )
+                
+                result = await flowers_email_integration(flowers_email, BackgroundTasks())
+                successful_count += 1
+                
+            except Exception as e:
+                errors.append({
+                    'fin': email_data.get('fin', 'unknown'),
+                    'error': str(e)
+                })
+        
+        return {
+            "status": "success" if successful_count > 0 else "partial_error",
+            "message": f"{successful_count} E-Mails erfolgreich verarbeitet",
+            "processed_count": successful_count,
+            "total_found": len(processed_emails),
+            "errors": errors,
+            "processed_emails": [
+                {
+                    'fin': email.get('fin'),
+                    'prozess': email.get('prozess_name'),
+                    'status': email.get('status'),
+                    'bearbeiter': email.get('bearbeiter')
+                }
+                for email in processed_emails
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Fehler bei manueller Posteingang-Verarbeitung: {e}")
+        return {
+            "status": "error",
+            "message": f"Fehler beim Verarbeiten des Posteingangs: {str(e)}",
+            "processed_count": 0
+        }
+
+@app.get("/integration/email/connection-test")
+async def test_email_connection():
+    """
+    E-Mail-Verbindung testen
+    """
+    try:
+        mail = email_processor.connect_to_email()
+        
+        # Posteingang-Info abrufen
+        status, message_count = mail.select('inbox')
+        total_messages = int(message_count[0]) if status == 'OK' else 0
+        
+        # Ungelesene E-Mails zählen
+        status, unread_messages = mail.search(None, 'UNSEEN')
+        unread_count = len(unread_messages[0].split()) if status == 'OK' and unread_messages[0] else 0
+        
+        mail.close()
+        mail.logout()
+        
+        return {
+            "status": "success",
+            "connection": "OK",
+            "server": email_processor.imap_server,
+            "user": email_processor.email_user,
+            "total_messages": total_messages,
+            "unread_messages": unread_count,
+            "scheduler_running": scheduler.running
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "connection": "FEHLER",
+            "error_message": str(e),
+            "server": email_processor.imap_server,
+            "user": email_processor.email_user
+        }
+
+@app.post("/integration/email/test-parsing")
+async def test_email_parsing_new(test_data: dict):
+    """
+    E-Mail-Parsing mit Ihrem Format testen
+    
+    Erwartet: {
+        "subject": "GWA gestartet", 
+        "body": "FIN: WAUZZZ8K3FA17TEST\\nMarke: Jeep\\nFarbe: Arablau Kristalleffekt"
+    }
+    """
+    try:
+        subject = test_data.get('subject', '')
+        body = test_data.get('body', '')
+        
+        # Betreff parsen
+        prozess_name, status = email_processor.parse_subject_enhanced(subject)
+        
+        # Body parsen
+        body_data = email_processor.parse_email_body_enhanced(body)
+        
+        # Bearbeiter-Mapping testen
+        mapped_bearbeiter = resolve_bearbeiter(body_data.get('bearbeiter'))
+        
+        return {
+            "status": "success",
+            "original_subject": subject,
+            "original_body": body,
+            "parsed_result": {
+                "prozess_name": prozess_name,
+                "status": status,
+                "fin": body_data.get('fin'),
+                "marke": body_data.get('marke'),
+                "farbe": body_data.get('farbe'),
+                "bearbeiter": body_data.get('bearbeiter'),
+                "mapped_bearbeiter": mapped_bearbeiter
+            },
+            "ready_for_processing": bool(prozess_name and body_data.get('fin'))
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Parsing-Fehler: {str(e)}"
+        }
+
+# Debug-Endpoint für Scheduler-Status
+@app.get("/integration/email/scheduler-status")
+async def get_scheduler_status():
+    """E-Mail-Scheduler Status abrufen"""
+    try:
+        return {
+            "scheduler_running": scheduler.running,
+            "jobs": [
+                {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": job.next_run_time.isoformat() if job.next_run_time else None
+                }
+                for job in scheduler.get_jobs()
+            ],
+            "email_config": {
+                "server": email_processor.imap_server,
+                "user": email_processor.email_user,
+                "credentials_available": bool(email_processor.email_user and email_processor.email_password)
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
