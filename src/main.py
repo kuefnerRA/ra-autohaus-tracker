@@ -6,9 +6,12 @@ import uuid
 import json
 import re
 import imaplib
-import email
+import email.message 
+import email.utils
 
 from email.header import decode_header
+from email import message_from_bytes
+from email.message import Message
 
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -25,6 +28,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.handlers.flowers_handler import FlowersHandler
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    pass
 
 # BigQuery direkt importieren
 try:
@@ -213,6 +220,87 @@ class FlowersEmailParser:
             "bearbeiter": bearbeiter,
             "prioritaet": prioritaet
         }
+    
+    @staticmethod
+    def extract_vehicle_data(email_content: str) -> Dict[str, Any]:
+        """Extrahiert Fahrzeugdaten aus E-Mail-Inhalt"""
+        vehicle_data = {}
+        
+        # Marke extrahieren
+        marke_pattern = re.compile(r'Marke:\s*([^\n\r]+)', re.IGNORECASE)
+        marke_match = marke_pattern.search(email_content)
+        if marke_match:
+            vehicle_data['marke'] = marke_match.group(1).strip()
+        
+        # Farbe extrahieren  
+        farbe_pattern = re.compile(r'Farbe:\s*([^\n\r]+)', re.IGNORECASE)
+        farbe_match = farbe_pattern.search(email_content)
+        if farbe_match:
+            vehicle_data['farbe'] = farbe_match.group(1).strip()
+        
+        # Modell extrahieren (optional)
+        modell_pattern = re.compile(r'Modell:\s*([^\n\r]+)', re.IGNORECASE)
+        modell_match = modell_pattern.search(email_content)
+        if modell_match:
+            vehicle_data['modell'] = modell_match.group(1).strip()
+        
+        # Baujahr extrahieren (optional)
+        baujahr_pattern = re.compile(r'Baujahr:\s*(\d{4})', re.IGNORECASE)
+        baujahr_match = baujahr_pattern.search(email_content)
+        if baujahr_match:
+            vehicle_data['baujahr'] = int(baujahr_match.group(1))
+        
+        datum_erstzulassung_pattern = re.compile(r'(?:Datum\s*Erstzulassung|Erstzulassung):\s*(\d{2}\.\d{2}\.\d{4})', re.IGNORECASE)
+        datum_match = datum_erstzulassung_pattern.search(email_content)
+        if datum_match:
+            try:
+                vehicle_data['datum_erstzulassung'] = datetime.strptime(datum_match.group(1), '%d.%m.%Y').date()
+            except ValueError:
+                pass
+        
+        antriebsart_pattern = re.compile(r'Antriebsart:\s*([^\n\r]+)', re.IGNORECASE)
+        antriebsart_match = antriebsart_pattern.search(email_content)
+        if antriebsart_match:
+            vehicle_data['antriebsart'] = antriebsart_match.group(1).strip()
+        
+        kw_leistung_pattern = re.compile(r'(?:KW-Leistung|KW|Leistung):\s*(\d+)', re.IGNORECASE)
+        kw_match = kw_leistung_pattern.search(email_content)
+        if kw_match:
+            vehicle_data['kw_leistung'] = int(kw_match.group(1))
+        
+        km_stand_pattern = re.compile(r'(?:KM-Stand|KM|Kilometerstand):\s*([\d.]+)', re.IGNORECASE)
+        km_match = km_stand_pattern.search(email_content)
+        if km_match:
+            km_value = km_match.group(1).replace('.', '')
+            vehicle_data['km_stand'] = int(km_value)
+        
+        schluessel_pattern = re.compile(r'(?:Anzahl\s*Fahrzeugschlüssel|Schlüssel):\s*(\d+)', re.IGNORECASE)
+        schluessel_match = schluessel_pattern.search(email_content)
+        if schluessel_match:
+            vehicle_data['anzahl_fahrzeugschluessel'] = int(schluessel_match.group(1))
+        
+        bereifung_pattern = re.compile(r'Bereifungsart:\s*([^\n\r]+)', re.IGNORECASE)
+        bereifung_match = bereifung_pattern.search(email_content)
+        if bereifung_match:
+            vehicle_data['bereifungsart'] = bereifung_match.group(1).strip()
+        
+        vorhalter_pattern = re.compile(r'(?:Anzahl\s*Vorhalter|Vorhalter):\s*(\d+)', re.IGNORECASE)
+        vorhalter_match = vorhalter_pattern.search(email_content)
+        if vorhalter_match:
+            vehicle_data['anzahl_vorhalter'] = int(vorhalter_match.group(1))
+        
+        ek_pattern = re.compile(r'(?:EK\s*netto|EK):\s*([\d.,]+)', re.IGNORECASE)
+        ek_match = ek_pattern.search(email_content)
+        if ek_match:
+            ek_value = ek_match.group(1).replace('.', '').replace(',', '.')
+            vehicle_data['ek_netto'] = float(ek_value)
+        
+        besteuerung_pattern = re.compile(r'Besteuerungsart:\s*([^\n\r]+)', re.IGNORECASE)
+        besteuerung_match = besteuerung_pattern.search(email_content)
+        if besteuerung_match:
+            vehicle_data['besteuerungsart'] = besteuerung_match.group(1).strip()
+
+        return vehicle_data
 
 # === BEARBEITER-MAPPING ===
 
@@ -264,15 +352,29 @@ async def save_vehicle_to_bigquery(vehicle_data: dict) -> bool:
 
         now_iso = datetime.now().isoformat()
 
+        datum_erstzulassung = vehicle_data.get("datum_erstzulassung")
+        datum_erstzulassung_iso = datum_erstzulassung.isoformat() if datum_erstzulassung else None
+
+
         row = {
             "fin": vehicle_data["fin"],
             "marke": vehicle_data["marke"],
-            "modell": vehicle_data["modell"],
-            "antriebsart": vehicle_data["antriebsart"],
-            "farbe": vehicle_data["farbe"],
+            "modell": vehicle_data.get("modell", "Unbekannt"),
+            "antriebsart": vehicle_data.get("antriebsart", "Unbekannt"),
+            "farbe": vehicle_data.get("farbe", "Unbekannt"),
             "baujahr": vehicle_data.get("baujahr"),
             "ersterfassung_datum": now_iso,
             "aktiv": True,
+            "erstellt_aus_email": vehicle_data.get("erstellt_aus_email", False),
+            "datenquelle_fahrzeug": vehicle_data.get("datenquelle_fahrzeug", "api"),
+            "datum_erstzulassung": datum_erstzulassung_iso,
+            "kw_leistung": vehicle_data.get("kw_leistung"),
+            "km_stand": vehicle_data.get("km_stand"),
+            "anzahl_fahrzeugschluessel": vehicle_data.get("anzahl_fahrzeugschluessel"),
+            "bereifungsart": vehicle_data.get("bereifungsart", "Unbekannt"),
+            "anzahl_vorhalter": vehicle_data.get("anzahl_vorhalter"),
+            "ek_netto": vehicle_data.get("ek_netto"),
+            "besteuerungsart": vehicle_data.get("besteuerungsart", "Unbekannt")
         }
 
         row = {k: v for k, v in row.items() if v is not None}
@@ -282,11 +384,11 @@ async def save_vehicle_to_bigquery(vehicle_data: dict) -> bool:
             logger.error(f"BigQuery errors: {errors}")
             return False
 
-        logger.info(f"✅ Vehicle saved to BigQuery: {vehicle_data['fin']}")
+        logger.info(f"Vehicle saved to BigQuery: {vehicle_data['fin']}")
         return True
 
     except Exception as e:
-        logger.error(f"❌ BigQuery save error: {e}")
+        logger.error(f"BigQuery save error: {e}")
         return False
 
 async def save_process_to_bigquery(process_data: dict) -> bool:
@@ -445,7 +547,21 @@ async def process_flowers_data(
     datenquelle: str = "flowers",
     notizen: Optional[str] = None,
     zusatz_daten: Optional[Dict] = None,
-    external_timestamp: Optional[datetime] = None
+    external_timestamp: Optional[datetime] = None,
+    # NEUE PARAMETER für Fahrzeugdaten
+    marke: Optional[str] = None,
+    farbe: Optional[str] = None,
+    modell: Optional[str] = None,
+    baujahr: Optional[int] = None,
+    datum_erstzulassung: Optional[date] = None,
+    antriebsart: Optional[str] = None,
+    kw_leistung: Optional[int] = None,
+    km_stand: Optional[int] = None,
+    anzahl_fahrzeugschluessel: Optional[int] = None,
+    bereifungsart: Optional[str] = None,
+    anzahl_vorhalter: Optional[int] = None,
+    ek_netto: Optional[float] = None,
+    besteuerungsart: Optional[str] = None
 ) -> Dict[str, Any]:
     """Zentrale Verarbeitung von Flowers-Daten"""
     try:
@@ -468,8 +584,38 @@ async def process_flowers_data(
             except Exception as e:
                 logger.warning(f"Fahrzeug-Check Fehler: {e}")
         
-        if not vehicle_exists:
-            logger.warning(f"⚠️ Fahrzeug {fin} nicht im System - lege Prozess trotzdem an")
+        if not vehicle_exists and (marke or farbe):
+            logger.info(f"Erstelle Fahrzeug automatisch: {fin}")
+            
+            # Fahrzeugdaten aus E-Mail-Informationen ableiten
+            vehicle_data = {
+                "fin": fin,
+                "marke": marke or "Unbekannt",
+                "modell": modell or "Unbekannt", 
+                "antriebsart": antriebsart or "Unbekannt",
+                "farbe": farbe or "Unbekannt",
+                "baujahr": baujahr,
+                # NEUE Felder hinzufügen
+                "datum_erstzulassung": datum_erstzulassung,
+                "kw_leistung": kw_leistung,
+                "km_stand": km_stand,
+                "anzahl_fahrzeugschluessel": anzahl_fahrzeugschluessel,
+                "bereifungsart": bereifungsart or "Unbekannt",
+                "anzahl_vorhalter": anzahl_vorhalter,
+                "ek_netto": ek_netto,
+                "besteuerungsart": besteuerungsart or "Unbekannt",
+                "erstellt_aus_email": True,
+                "datenquelle_fahrzeug": datenquelle
+            }
+            
+            # Fahrzeug in BigQuery erstellen
+            vehicle_created = await save_vehicle_to_bigquery(vehicle_data)
+            
+            if vehicle_created:
+                logger.info(f"Fahrzeug automatisch erstellt: {fin} ({marke})")
+                vehicle_exists = True
+            else:
+                logger.warning(f"Automatische Fahrzeug-Erstellung fehlgeschlagen: {fin}")
         
         # 3. Prozess-Daten strukturieren
         prozess_id = str(uuid.uuid4())
@@ -499,6 +645,7 @@ async def process_flowers_data(
             "success": True,
             "process_data": process_data,
             "fahrzeug_existiert": vehicle_exists,
+            "fahrzeug_automatisch_erstellt": not vehicle_exists and (marke or farbe),  # NEUE ZEILE
             "bearbeiter_gemappt": f"{bearbeiter} -> {mapped_bearbeiter}" if bearbeiter != mapped_bearbeiter else None
         }
         
@@ -834,6 +981,7 @@ async def flowers_email_integration(email_data: FlowersEmailData, background_tas
         
         # Prozess-Informationen extrahieren
         prozess_info = parser.extract_process_info(email_data.betreff, email_data.inhalt)
+        fahrzeug_daten = parser.extract_vehicle_data(email_data.inhalt)
         
         if not prozess_info["prozess_typ"]:
             raise HTTPException(status_code=400, detail="Prozess-Typ konnte nicht ermittelt werden")
@@ -846,7 +994,22 @@ async def flowers_email_integration(email_data: FlowersEmailData, background_tas
             bearbeiter=prozess_info["bearbeiter"],
             prioritaet=prozess_info["prioritaet"],
             datenquelle="flowers_email",
-            notizen=f"E-Mail: {email_data.betreff}"
+            notizen=f"E-Mail: {email_data.betreff}",
+            # Bestehende Parameter
+            marke=fahrzeug_daten.get("marke"),
+            farbe=fahrzeug_daten.get("farbe"),
+            modell=fahrzeug_daten.get("modell"),
+            baujahr=fahrzeug_daten.get("baujahr"),
+            # NEUE Parameter hinzufügen
+            datum_erstzulassung=fahrzeug_daten.get("datum_erstzulassung"),
+            antriebsart=fahrzeug_daten.get("antriebsart"),
+            kw_leistung=fahrzeug_daten.get("kw_leistung"),
+            km_stand=fahrzeug_daten.get("km_stand"),
+            anzahl_fahrzeugschluessel=fahrzeug_daten.get("anzahl_fahrzeugschluessel"),
+            bereifungsart=fahrzeug_daten.get("bereifungsart"),
+            anzahl_vorhalter=fahrzeug_daten.get("anzahl_vorhalter"),
+            ek_netto=fahrzeug_daten.get("ek_netto"),
+            besteuerungsart=fahrzeug_daten.get("besteuerungsart")
         )
         
         if result["success"]:
@@ -1306,11 +1469,11 @@ class FlowersEmailProcessor:
         # Betreff-Parsing: "GWA gestartet" → ('GWA', 'gestartet')
         self.subject_pattern = re.compile(r'^([A-Za-z0-9_\-\s]+)\s+([A-Za-z0-9_\-\s]+)$')
     
-    def connect_to_email(self) -> imaplib.IMAP4_SSL:
+    def connect_to_email(self):
         """Verbindung zum E-Mail-Server herstellen"""
         try:
             mail = imaplib.IMAP4_SSL(self.imap_server)
-            mail.login(self.email_user, self.email_password)
+            mail.login(str(self.email_user), str(self.email_password))
             mail.select('inbox')
             logger.info(f"E-Mail-Verbindung zu {self.imap_server} erfolgreich")
             return mail
@@ -1318,7 +1481,7 @@ class FlowersEmailProcessor:
             logger.error(f"E-Mail-Verbindung fehlgeschlagen: {e}")
             raise
     
-    def parse_subject_enhanced(self, subject: str) -> Tuple[str, str]:
+    def parse_subject_enhanced(self, subject: str): 
         """Erweiterte Betreffzeilen-Analyse: 'GWA gestartet' → ('Aufbereitung', 'gestartet')"""
         try:
             # Betreff dekodieren
@@ -1326,8 +1489,10 @@ class FlowersEmailProcessor:
             for part, encoding in decode_header(subject):
                 if isinstance(part, bytes):
                     decoded_subject += part.decode(encoding or 'utf-8')
-                else:
+                elif isinstance(part, str):
                     decoded_subject += part
+                else:
+                    decoded_subject += str(part)
             
             # Prozess und Status extrahieren
             match = self.subject_pattern.match(decoded_subject.strip())
@@ -1378,7 +1543,7 @@ class FlowersEmailProcessor:
         
         return parsed_data
     
-    def process_unread_emails(self) -> List[Dict[str, any]]:
+    def process_unread_emails(self) -> List[Dict[str, Any]]:
         """Ungelesene E-Mails verarbeiten und parsen"""
         processed_emails = []
         
@@ -1388,23 +1553,38 @@ class FlowersEmailProcessor:
             # Nach ungelesenen E-Mails suchen
             status, messages = mail.search(None, 'UNSEEN')
             
-            if status != 'OK':
+            if status != 'OK' or not messages or messages[0] is None:
                 logger.error("Fehler beim Suchen nach E-Mails")
                 return processed_emails
             
-            email_ids = messages[0].split()
+            ids_raw = messages[0].decode() if isinstance(messages[0], (bytes, bytearray)) else (messages[0] or "")
+            email_ids = ids_raw.split()
             logger.info(f"{len(email_ids)} ungelesene E-Mails gefunden")
             
             for email_id in email_ids:
                 try:
                     # E-Mail abrufen
                     status, msg_data = mail.fetch(email_id, '(RFC822)')
-                    
-                    if status != 'OK':
+                    if status != 'OK' or not msg_data:
                         continue
-                    
-                    raw_email = msg_data[0][1]
-                    msg = email.message_from_bytes(raw_email)
+
+                    # Robust extrahieren, ohne gefährliche Indexe/Längen auf untypisierten Objekten
+                    raw_email: Optional[bytes] = None
+
+                    first_part = msg_data[0]
+                    # IMAP liefert normalerweise eine Tuple-Struktur (header, bytes)
+                    if isinstance(first_part, (tuple, list)):
+                        if len(first_part) >= 2 and isinstance(first_part[1], (bytes, bytearray)):
+                            raw_email = bytes(first_part[1])
+                    elif isinstance(first_part, (bytes, bytearray)):
+                        # manche Server-Implementierungen liefern direkt bytes
+                        raw_email = bytes(first_part)
+
+                    if raw_email is None:
+                        logger.warning("Kein RAW E-Mail-Body gefunden – übersprungen")
+                        continue
+
+
                     
                     # HIER DEBUG-ZEILE HINZUFÜGEN:
                 
@@ -1430,8 +1610,24 @@ class FlowersEmailProcessor:
                         continue            
 
                     # E-Mail-Objekt erstellen
-                    raw_email = msg_data[0][1]
-                    msg = email.message_from_bytes(raw_email)
+                    from email import message_from_bytes
+                    from email.message import Message
+
+                    raw_email: Optional[bytes] = None
+
+                    if msg_data and isinstance(msg_data[0], (tuple, list)):
+                        first = msg_data[0]
+                        if len(first) > 1 and isinstance(first[1], (bytes, bytearray)):
+                            raw_email = bytes(first[1])
+                    elif msg_data and isinstance(msg_data[0], (bytes, bytearray)):
+                        # manche IMAP-Implementierungen liefern direkt bytes
+                        raw_email = bytes(msg_data[0])
+
+                    if raw_email is None:
+                        logger.warning("Kein RAW E-Mail-Body gefunden – übersprungen")
+                        continue
+
+                    msg: Message = message_from_bytes(raw_email)
                     
                     # Basic-Informationen extrahieren
                     subject = msg['subject'] or ""
@@ -1453,10 +1649,22 @@ class FlowersEmailProcessor:
                     if msg.is_multipart():
                         for part in msg.walk():
                             if part.get_content_type() == "text/plain":
-                                body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                payload = part.get_payload(decode=True)
+                                if isinstance(payload, (bytes, bytearray)):
+                                    body = payload.decode('utf-8', errors='ignore')
+                                elif isinstance(payload, str):
+                                    body = payload
+                                else:
+                                    body = ""
                                 break
                     else:
-                        body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+                        payload = msg.get_payload(decode=True)
+                        if isinstance(payload, (bytes, bytearray)):
+                            body = payload.decode('utf-8', errors='ignore')
+                        elif isinstance(payload, str):
+                            body = payload
+                        else:
+                            body = ""
                     
                     # Body parsen
                     body_data = self.parse_email_body_enhanced(body)
@@ -1630,11 +1838,15 @@ async def test_email_connection():
         
         # Posteingang-Info abrufen
         status, message_count = mail.select('inbox')
-        total_messages = int(message_count[0]) if status == 'OK' else 0
-        
-        # Ungelesene E-Mails zählen
+        total_messages = 0
+        if status == 'OK' and message_count and message_count[0] is not None:
+            total_messages = int((message_count[0].decode() or "0"))
+
         status, unread_messages = mail.search(None, 'UNSEEN')
-        unread_count = len(unread_messages[0].split()) if status == 'OK' and unread_messages[0] else 0
+        unread_count = 0
+        if status == 'OK' and unread_messages and unread_messages[0]:
+            unread_ids = (unread_messages[0].decode() or "").split()
+            unread_count = len(unread_ids)
         
         mail.close()
         mail.logout()
