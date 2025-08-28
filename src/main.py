@@ -1108,7 +1108,8 @@ async def zapier_flexible_webhook(request: Request, background_tasks: Background
         # Prozess extrahieren
         prozess = (json_data.get('prozess_name') or 
                   json_data.get('prozess') or 
-                  json_data.get('process_name'))
+                  json_data.get('process_name') or
+                  json_data.get('prozess_typ'))
         
         # Status extrahieren  
         status = (json_data.get('neuer_status') or 
