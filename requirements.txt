@@ -19,3 +19,7 @@ google-cloud-logging
 pytest
 black
 flake8
+
+# E-Mail Integration
+beautifulsoup4
+apscheduler

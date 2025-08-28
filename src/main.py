@@ -20,7 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from datetime import date, datetime
 from typing import Any, Dict, Optional, List, Tuple
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel, Field, validator
 
 # .env Datei laden
@@ -1073,6 +1073,93 @@ async def zapier_webhook(data: ZapierWebhookData, background_tasks: BackgroundTa
         logger.error(f"❌ Zapier Webhook Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/integration/zapier/debug")
+async def zapier_debug_webhook(request: Request):
+    """Debug-Endpoint für Zapier JSON-Format"""
+    try:
+        body = await request.body()
+        json_data = await request.json()
+        
+        logger.info(f"Zapier Debug - Raw Body: {body}")
+        logger.info(f"Zapier Debug - JSON: {json_data}")
+        
+        return {
+            "status": "debug_success",
+            "received_data": json_data,
+            "data_type": type(json_data).__name__
+        }
+    except Exception as e:
+        logger.error(f"Zapier Debug Error: {e}")
+        return {"status": "debug_error", "error": str(e)}
+    
+@app.post("/integration/zapier/flexible")
+async def zapier_flexible_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Flexibler Zapier Webhook der jedes JSON akzeptiert"""
+    try:
+        json_data = await request.json()
+        logger.info(f"Flexible Zapier Webhook: {json_data}")
+        
+        # FIN extrahieren (verschiedene mögliche Feldnamen)
+        fin = (json_data.get('fahrzeug_fin') or 
+               json_data.get('fin') or 
+               json_data.get('vehicle_fin') or 
+               json_data.get('FIN'))
+        
+        # Prozess extrahieren
+        prozess = (json_data.get('prozess_name') or 
+                  json_data.get('prozess') or 
+                  json_data.get('process_name'))
+        
+        # Status extrahieren  
+        status = (json_data.get('neuer_status') or 
+                 json_data.get('status') or 
+                 json_data.get('new_status'))
+        
+        logger.info(f"🔍 Extracted values: fin='{fin}', prozess='{prozess}', status='{status}'")
+        
+        if not fin or not prozess or not status:
+            missing_fields = []
+            if not fin: missing_fields.append("fin")
+            if not prozess: missing_fields.append("prozess")
+            if not status: missing_fields.append("status")
+            
+            logger.warning(f"🚫 Missing required fields: {missing_fields}")
+            return {
+                "status": "error",
+                "message": "Required fields missing",
+                "missing_fields": missing_fields,
+                "received_fields": list(json_data.keys())
+            }
+        
+        logger.info(f"✅ All fields found, processing...")
+        
+        # Normalisierte Verarbeitung
+        normalized_prozess = flowers_handler.normalize_prozess_typ(prozess)
+        
+        result = await process_flowers_data(
+            fin=fin,
+            prozess_typ=normalized_prozess,
+            status=status,
+            bearbeiter=json_data.get('bearbeiter_name') or json_data.get('bearbeiter'),
+            datenquelle="zapier_flexible"
+        )
+        
+        if result["success"]:
+            await save_process_to_bigquery(result["process_data"])
+            
+        return {
+            "status": "success",
+            "fin": fin,
+            "prozess": normalized_prozess,
+            "status": status
+        }
+        
+    except Exception as e:
+        logger.error(f"Flexible Zapier Webhook Error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+
 @app.get("/integration/flowers/dashboard")
 async def flowers_integration_dashboard():
     """Flowers-Integration Dashboard"""
@@ -1938,3 +2025,4 @@ async def get_scheduler_status():
         }
     except Exception as e:
         return {"error": str(e)}
+

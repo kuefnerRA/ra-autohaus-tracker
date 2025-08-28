@@ -31,7 +31,10 @@ class FlowersHandler:
             'garage': 'Werkstatt',          
             'fotoshooting': 'Foto',         
             'transport': 'Anlieferung',     
-            'ankauf': 'Einkauf'             
+            'ankauf': 'Einkauf',
+            '(0) Start Fahrzeugaufbereitung' : 'Aufbereitung',
+            '(4.0) Werkstattplanung' : 'Werkstatt',
+            '(1) DA Fahrzeuganlage' : 'Einkauf'       #  
         }
         
         # E-Mail-Patterns für Flowers
