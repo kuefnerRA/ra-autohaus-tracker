@@ -1,7 +1,7 @@
 # src/routers/integration.py
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 
 # Korrekte absolute Imports für Router
@@ -16,17 +16,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/integration", tags=["Integration"])
 
 # Services (werden von main.py injiziert)
-process_service: ProcessService = None
+process_service: Optional[ProcessService] = None
 
 def init_router(bq_client):
     """Router mit Abhängigkeiten initialisieren"""
     global process_service
     process_service = ProcessService(bq_client)
 
+def get_process_service() -> ProcessService:
+    """ProcessService holen mit Fehlerbehandlung"""
+    if process_service is None:
+        raise HTTPException(
+            status_code=500, 
+            detail="ProcessService not initialized. Router not properly configured."
+        )
+    return process_service
 
 @router.post("/zapier/flexible")
 async def zapier_flexible_legacy(request: Request, background_tasks: BackgroundTasks):
     """KRITISCH: Legacy-Endpoint für bestehende Zapier-Zaps"""
+    if process_service is None:
+        raise HTTPException(status_code=500, detail="ProcessService not initialized")
+    
     try:
         json_data = await request.json()
         logger.info(f"LEGACY flexible endpoint: {list(json_data.keys())}")
@@ -101,7 +112,7 @@ async def zapier_unified_webhook(request: Request, background_tasks: BackgroundT
         unified_data = adapter.convert_to_unified(json_data)
         
         # 2. Zentrale Verarbeitung (GLEICH für alle Quellen!)
-        result = await process_service.process_unified_data(unified_data)
+        result = await get_process_service().process_unified_data(unified_data)
         
         # 3. Standardisierte Antwort
         return {
@@ -138,7 +149,7 @@ async def email_unified_webhook(email_data: EmailInput, background_tasks: Backgr
         unified_data = adapter.convert_to_unified(email_data.dict())
         
         # 2. Zentrale Verarbeitung (GLEICH für alle Quellen!)
-        result = await process_service.process_unified_data(unified_data)
+        result = await get_process_service().process_unified_data(unified_data)
         
         # 3. Standardisierte Antwort
         return {
@@ -175,7 +186,7 @@ async def flowers_unified_webhook(webhook_data: WebhookInput, background_tasks: 
         unified_data = adapter.convert_to_unified(webhook_data.dict())
         
         # 2. Zentrale Verarbeitung (GLEICH für alle Quellen!)
-        result = await process_service.process_unified_data(unified_data)
+        result = await get_process_service().process_unified_data(unified_data)
         
         # 3. Standardisierte Antwort
         return {
@@ -220,7 +231,7 @@ async def test_all_sources():
         }
         adapter = ZapierAdapter()
         unified = adapter.convert_to_unified(zapier_data)
-        result = await process_service.process_unified_data(unified)
+        result = await get_process_service().process_unified_data(unified)
         test_results.append({"source": "zapier", "result": result.dict()})
     except Exception as e:
         test_results.append({"source": "zapier", "error": str(e)})
@@ -235,7 +246,7 @@ async def test_all_sources():
         }
         adapter = EmailAdapter()
         unified = adapter.convert_to_unified(email_data)
-        result = await process_service.process_unified_data(unified)
+        result = await get_process_service().process_unified_data(unified)
         test_results.append({"source": "email", "result": result.dict()})
     except Exception as e:
         test_results.append({"source": "email", "error": str(e)})
@@ -251,7 +262,7 @@ async def test_all_sources():
         }
         adapter = WebhookAdapter()
         unified = adapter.convert_to_unified(webhook_data)
-        result = await process_service.process_unified_data(unified)
+        result = await get_process_service().process_unified_data(unified)
         test_results.append({"source": "webhook", "result": result.dict()})
     except Exception as e:
         test_results.append({"source": "webhook", "error": str(e)})
