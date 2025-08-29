@@ -5,11 +5,11 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 
 # Korrekte absolute Imports für Router
-from src.services.process_service import ProcessService
-from src.adapters.zapier_adapter import ZapierAdapter  
-from src.adapters.email_adapter import EmailAdapter
-from src.adapters.webhook_adapter import WebhookAdapter
-from src.models.integration import EmailInput, WebhookInput
+from services.process_service import ProcessService
+from adapters.zapier_adapter import ZapierAdapter  
+from adapters.email_adapter import EmailAdapter
+from adapters.webhook_adapter import WebhookAdapter
+from models.integration import EmailInput, WebhookInput
 
 logger = logging.getLogger(__name__)
 

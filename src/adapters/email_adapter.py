@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
 # Absolute Imports
-from src.models.integration import EmailInput, UnifiedProcessData
+from models.integration import EmailInput, UnifiedProcessData
 
 logger = logging.getLogger(__name__)
 

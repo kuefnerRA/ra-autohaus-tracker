@@ -41,7 +41,7 @@ app.add_middleware(
 
 # Router einbinden (mit korrekten absoluten Imports)
 try:
-    from src.routers.integration import router as integration_router, init_router
+    from routers.integration import router as integration_router, init_router
     
     # Router mit BigQuery-Client initialisieren
     init_router(bq_client)

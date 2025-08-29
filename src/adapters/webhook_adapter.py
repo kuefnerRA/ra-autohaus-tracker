@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 
 # Absolute Imports
-from src.models.integration import WebhookInput, UnifiedProcessData
+from models.integration import WebhookInput, UnifiedProcessData
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class WebhookAdapter:
         fin = webhook_input.fin
         if not fin:
             # Versuche FIN aus fahrzeug_id zu extrahieren
-            from src.handlers.flowers_handler import FlowersHandler
+            from handlers.flowers_handler import FlowersHandler
             fin = FlowersHandler.extract_fin_from_text(webhook_input.fahrzeug_id)
         
         if not fin:

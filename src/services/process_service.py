@@ -7,8 +7,8 @@ from typing import Dict, Any, Optional
 from google.cloud import bigquery
 
 # Absolute Imports
-from src.models.integration import UnifiedProcessData, IntegrationResponse
-from src.handlers.flowers_handler import FlowersHandler
+from models.integration import UnifiedProcessData, IntegrationResponse
+from handlers.flowers_handler import FlowersHandler
 
 logger = logging.getLogger(__name__)
 

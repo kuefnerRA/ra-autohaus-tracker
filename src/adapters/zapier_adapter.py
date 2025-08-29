@@ -4,7 +4,7 @@ from typing import Dict, Any
 import logging
 
 # Absolute Imports für Module
-from src.models.integration import ZapierInput, UnifiedProcessData
+from models.integration import ZapierInput, UnifiedProcessData
 
 logger = logging.getLogger(__name__)
 
