@@ -1,27 +1,69 @@
-# src/main_minimal.py - Garantiert funktionierend
+# src/main.py - Finale modulare Version
+"""
+RA Autohaus Tracker - Hauptanwendung
+Modulare FastAPI Anwendung für Multi-Source Fahrzeugprozess-Tracking
+"""
+
 import logging
-import os
-import sys
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
-import uuid
+from contextlib import asynccontextmanager
 
-# Python Path Setup
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
-# Logging
+# Core imports
+from src.core.dependencies import set_bigquery_service, get_services_health
+
+# Router imports  
+from src.api.routes.integration import router as integration_router
+from src.api.routes.dashboard import router as dashboard_router
+from src.api.routes.vehicles import router as vehicles_router
+from src.api.routes.info import router as info_router
+
+# Setup
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# FastAPI App
+# BigQuery Service Setup
+try:
+    from src.services.bigquery_service import BigQueryService
+    bq_service = BigQueryService()
+    logger.info("✅ BigQuery Service erfolgreich initialisiert")
+    BIGQUERY_AVAILABLE = True
+except Exception as e:
+    logger.error(f"❌ BigQuery Service Fehler: {e}")
+    bq_service = None
+    BIGQUERY_AVAILABLE = False
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application Lifecycle Management"""
+    # Startup
+    logger.info("🚀 RA Autohaus Tracker startet...")
+    
+    # BigQuery Client in Dependencies injizieren
+    set_bigquery_service(bq_service)
+    
+    # Services Health Check
+    services = get_services_health()
+    logger.info(f"📊 Services Status: {services}")
+    
+    yield
+    
+    # Shutdown
+    logger.info("⏹️  RA Autohaus Tracker wird beendet...")
+
+# FastAPI App mit Lifecycle
 app = FastAPI(
-    title="RA Autohaus Tracker API", 
+    title="RA Autohaus Tracker API",
+    description="Multi-Source Fahrzeugprozess-Tracking für Reinhardt Automobile",
     version="2.0.0",
-    docs_url="/docs"
+    lifespan=lifespan
 )
 
-# CORS
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,156 +72,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Basis-Endpunkte
+# Router Registration
+app.include_router(integration_router)  # Integration Routes (bereits vorhanden)
+app.include_router(dashboard_router)    # Dashboard Routes (neu)
+app.include_router(vehicles_router)     # Vehicle Routes (neu)  
+app.include_router(info_router)         # Info Routes (neu)
+
+# Root Endpoints
 @app.get("/")
 async def root():
+    """API Root mit Übersicht"""
     return {
-        "message": "RA Autohaus Tracker API - Minimal Working Version",
+        "message": "RA Autohaus Tracker API",
         "version": "2.0.0",
+        "architektur": "modular",
         "docs": "/docs",
-        "status": "healthy"
+        "bigquery_verfügbar": BIGQUERY_AVAILABLE,
+        "services": get_services_health(),
+        "api_bereiche": {
+            "integration": "/integration/* - Webhook-Integrationen (Zapier, Flowers)",
+            "dashboard": "/dashboard/* - KPIs und Warteschlangen",
+            "fahrzeuge": "/fahrzeuge/* - Fahrzeug-Management", 
+            "info": "/info/* - System-Informationen"
+        },
+        "timestamp": datetime.now().isoformat()
     }
 
 @app.get("/health")
-async def health():
-    return {"status": "healthy", "version": "2.0.0"}
-
-# Dashboard Endpunkte direkt implementiert (ohne externen Router)
-@app.get("/dashboard/kpis")
-async def dashboard_kpis():
+async def health_check():
+    """Umfassender Gesundheitscheck"""
     return {
-        "status": "success",
-        "data": {
-            "total_fahrzeuge": 42,
-            "aktive_prozesse": 15,
-            "wartende_prozesse": 8,
-            "sla_violations": 2,
-            "durchschnittliche_bearbeitungszeit": 125.5
+        "status": "healthy",
+        "version": "2.0.0",
+        "architektur": "modular",
+        "components": {
+            "api": "healthy",
+            "bigquery": "healthy" if bq_service else "unavailable",
+            "services": get_services_health()
+        },
+        "endpoints": {
+            "integration": ["/integration/zapier/webhook", "/integration/email/webhook"],
+            "dashboard": ["/dashboard/kpis", "/dashboard/warteschlangen"],
+            "fahrzeuge": ["/fahrzeuge", "/fahrzeuge/{fin}"],
+            "info": ["/info/prozesse", "/info/bearbeiter", "/info/system"]
         },
         "timestamp": datetime.now().isoformat()
     }
 
-@app.get("/dashboard/warteschlangen")
-async def dashboard_warteschlangen():
-    return {
-        "status": "success",
-        "warteschlangen": {
-            "Aufbereitung": {"wartend": 3, "in_bearbeitung": 2},
-            "Foto": {"wartend": 1, "in_bearbeitung": 1},
-            "Werkstatt": {"wartend": 2, "in_bearbeitung": 3},
-            "Verkauf": {"wartend": 2, "in_bearbeitung": 1}
-        },
-        "timestamp": datetime.now().isoformat()
-    }
-
-# Fahrzeug-Endpunkte direkt implementiert  
-@app.get("/fahrzeuge")
-async def list_fahrzeuge():
-    return {
-        "status": "success",
-        "fahrzeuge": [
-            {
-                "id": str(uuid.uuid4()),
-                "fin": f"MOCK{i:013d}",
-                "marke": "Mock Marke",
-                "modell": "Mock Modell",
-                "erstellt_am": datetime.now().isoformat()
-            }
-            for i in range(5)
-        ],
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.post("/fahrzeuge", status_code=201)
-async def create_fahrzeug(fahrzeug: dict):
-    return {
-        "status": "success",
-        "message": "Fahrzeug erfolgreich angelegt",
-        "fin": fahrzeug.get("fin"),
-        "timestamp": datetime.now().isoformat()
-    }
-
-# Prozess-Endpunkte
-@app.get("/processes/info/prozesse")
-async def process_info():
-    return {
-        "status": "success",
-        "verfuegbare_prozesse": [
-            "Einkauf", "Anlieferung", "Aufbereitung", 
-            "Foto", "Werkstatt", "Verkauf"
-        ],
-        "status_optionen": [
-            "wartend", "gestartet", "in_bearbeitung", 
-            "pausiert", "abgeschlossen", "abgebrochen"
-        ],
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/processes")
-async def list_processes():
-    return {
-        "status": "success",
-        "prozesse": [
-            {
-                "id": str(uuid.uuid4()),
-                "process_id": f"PROC_{i}",
-                "fin": f"MOCK{i:013d}",
-                "prozess_typ": "Aufbereitung",
-                "status": "wartend",
-                "erstellt_am": datetime.now().isoformat()
-            }
-            for i in range(3)
-        ],
-        "timestamp": datetime.now().isoformat()
-    }
-
-# Integration-Endpunkte (kritisch für Zapier)
-@app.post("/integration/zapier/webhook")
-async def zapier_webhook(request_data: dict):
-    logger.info(f"Zapier Webhook erhalten: {request_data}")
-    
-    return {
-        "status": "success",
-        "message": "Zapier-Daten erfolgreich verarbeitet",
-        "fin": request_data.get("fahrzeug_fin"),
-        "prozess": request_data.get("prozess_name"),
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.post("/integration/zapier/flexible")  
-async def zapier_flexible_legacy(request_data: dict):
-    """Legacy-Endpoint für bestehende Zapier-Integration"""
-    logger.info(f"Legacy Zapier Endpoint: {request_data}")
-    
-    return {
-        "status": "success",
-        "message": "Verarbeitung erfolgreich (Legacy-Endpoint)",
-        "fin": request_data.get("fahrzeug_fin"),
-        "prozess": request_data.get("prozess_name"),
-        "timestamp": datetime.now().isoformat()
-    }
-
-@app.get("/integration/debug/test-all-sources")
-async def integration_debug():
-    return {
-        "status": "success",
-        "message": "Integration-Debug erfolgreich",
-        "test_results": [
-            {"source": "zapier", "status": "ok"},
-            {"source": "email", "status": "ok"}, 
-            {"source": "webhook", "status": "ok"}
-        ],
-        "timestamp": datetime.now().isoformat()
-    }
-
-# Catch-All (für unbekannte Routen)
-@app.get("/{path:path}")
-async def catch_all(path: str):
-    return {
-        "error": "Endpunkt nicht gefunden (Minimal Version)",
-        "path": f"/{path}",
-        "available_endpoints": [
-            "/health", "/dashboard/kpis", "/fahrzeuge", 
-            "/processes", "/integration/zapier/webhook"
-        ]
-    }
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
