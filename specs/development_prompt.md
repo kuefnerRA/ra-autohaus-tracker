@@ -3,6 +3,23 @@
 ## Projekt-Kontext
 
 Entwickle ein **Fahrzeugprozess-Tracking-System** für **Reinhardt Automobile GmbH** mit absolut sauberer Architektur und normalisierten Datenbank-Design.
+Die Fahrzeuge sind immer einem Prozess und einem Status des Prozesses zugeordnet. 
+
+Es soll eine API bereitgestellt werden, über die Prozeßänderungen bzw. Statusänderungen zu Fahrzeugen übermittelt werden können. Jedes Fahrzeug ist immer einem eindeutigen Prozess zugeordnet und darin einem Status. Die Statushistorie zu jedem Fahrzeug soll gespeichert werden. Zu jedem Prozeß gehört auch ein Bearbeiter.
+Ein Fahrzeug wird über die FIN eindeutig identifiziert. Fahrzeugstammdaten werden unabhängig vom Status gespeichert. Es soll möglich sein, bei der Übermittlung einer Statusänderung Fahrzeugstammdaten zu übermitteln, die dann auch gespeichert werden.
+Die Prozessinformationen kommen aus einem Workflow Management System namens Flowers.
+Zusätzliche Informationen zu Fahrzeugen, die nicht in Flowers enthalten sind, können über eine API zu einem Fahrzeugverwaltungssytsem namens Audaris abgerufen werden.
+
+Die API wird über unterschiedliche Kanäle (Email, Zapier Webhook, Allgemeiner Webhook) aufgerufen, für die unterschiedliche Endpunkte vorgesehen sind.
+Wichtig ist die Ermittlung von Prozeßlaufzeiten, nach prozesstyp und Bearbeiter.
+Die API soll über Google Cloud Run bereitgestellt werden.
+Die Datenspeicherung soll über BigQuery erfolgen
+Das Setup von Cloud Run und Big Query soll über Skripte erfolgen.
+Das Deployment von Entwicklungs- und Produktionsumgebung soll über Skripte erfolgen.
+Die Authentifizierung an GC soll über Service-Accounts erfolgen.
+
+## Wichtige Vorgehensweisen
+Die Entwicklung soll in angemessenen Schritten erfolgen. Jeder Entwicklungsschritt soll immer zuerst lokal getestet werden, es sollen alle erkannten Fehler zuerst lokal beseitigt werden, bevor es zum nächsten Schritt weitergeht.
 
 ## Technische Anforderungen
 
@@ -102,10 +119,6 @@ PROZESSE = {
 BEARBEITER_MAPPING = {
     "Thomas K.": "Thomas Küfner",
     "Max R.": "Maximilian Reinhardt",
-    "Hans M.": "Hans Müller",
-    "Anna K.": "Anna Klein",
-    "Thomas W.": "Thomas Weber",
-    "Stefan B.": "Stefan Becker"
 }
 ```
 

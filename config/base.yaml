@@ -1,5 +1,0 @@
-# Auto-generiert: fachliche Defaults (keine Secrets)
-BIGQUERY_DATASET: "autohaus"
-ENVIRONMENT: "prod"
-LOG_LEVEL: "INFO"
-PORT: 8080
