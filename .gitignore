@@ -1,138 +1,45 @@
-# ===============================
 # Python
-# ===============================
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyo
-*.pyd
 *.so
 .Python
-
-# Distribution / packaging
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-bin/                      # falls erstellt
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# ===============================
-# Virtual Environments
-# ===============================
-.venv/
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
+.venv/
 
-# ===============================
-# Environment files
-# ===============================
+# Google Cloud
+service-account*.json
+*.json
+!package*.json
+
+# Environment
 .env
-.env.*
-!.env.example
-*.env
-config/local.env
+.env.local
+.env.production
 
-# ===============================
-# Google Cloud / Credentials
-# ===============================
-key.json
-service-account-key.json
-*-key.json
-gcloud-config/
-
-# ===============================
-# Docker
-# ===============================
-.docker/
-docker-compose.override.yml
-
-# ===============================
-# Tests / Coverage / Hypothesis
-# ===============================
-.tox/
-.nox/
-.coverage
-.coverage.*
-coverage.xml
-*.cover
-*.py,cover
-.pytest_cache/
-.hypothesis/
-htmlcov/
-.cache
-
-# ===============================
-# IDE / Editor
-# ===============================
-.vscode/                 # statt nur .vscode/settings.json = alles local
+# IDE
+.vscode/
 .idea/
-*.sublime-project
-*.sublime-workspace
 *.swp
-*~
-
-# ===============================
-# Type Checkers
-# ===============================
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-.pytype/
-cython_debug/
-
-# ===============================
-# OS / Misc
-# ===============================
+*.swo
 .DS_Store
-Thumbs.db
+
+# Logs
 *.log
 logs/
 
-# ===============================
-# Project specific
-# ===============================
-tmp/
-data/
-*.backup
-*.bak
-*.tmp
-*.zip
-*.tar
-*.tar.gz
-*.tgz
-*.rar
-src (2)/
-scripts (2)/
-config (2)/
-temp/
-config/legacy_backup/
+# OS
+Thumbs.db
 
-# Build/Tool marker files
-*.identifier
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
-# Windows Alternate Data Streams (tauchen in WSL als Dateien auf)
-*:[Zz]one.Identifier*
-
-# Lokale/umgebungsspezifische env-Dateien im config/
-config/*.env
+# Build
+build/
+dist/
+*.egg-info/
