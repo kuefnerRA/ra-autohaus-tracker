@@ -179,6 +179,28 @@ async def shutdown_services():
         logger.error("❌ Fehler beim Service-Shutdown", error=str(e))
 
 # Development Utilities
+
+def reset_services():
+    """
+    Setzt alle Service-Singletons zurück (Development only).
+    
+    ⚠️ Nur für Development/Testing verwenden!
+    """
+    global _bigquery_service, _vehicle_service
+    
+    logger.info("🔄 Services werden zurückgesetzt...")
+    
+    # Cache der lru_cache Funktionen leeren
+    get_bigquery_service.cache_clear()
+    get_vehicle_service.cache_clear()
+    
+    # Global Singletons zurücksetzen
+    _bigquery_service = None
+    _vehicle_service = None
+    
+    logger.info("✅ Services erfolgreich zurückgesetzt")
+
+
 def get_service_info() -> dict:
     """
     Liefert Informationen über alle Services für Debugging.
@@ -199,3 +221,4 @@ def get_service_info() -> dict:
         },
         'environment': get_environment_config()
     }
+

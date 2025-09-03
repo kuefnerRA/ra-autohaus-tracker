@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Dict, List, Optional, Any, Union
 from enum import Enum
 
-from pydantic import BaseModel, Field, validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict
 
 # Enums für konstante Werte
 class ProzessTyp(str, Enum):
@@ -84,18 +84,20 @@ class FahrzeugStammCreate(BaseModel):
     erstellt_aus_email: Optional[bool] = Field(False, description="Wurde aus E-Mail erstellt")
     datenquelle_fahrzeug: Optional[Datenquelle] = Field(Datenquelle.API, description="Quelle der Fahrzeugdaten")
     
-    @validator('fin')
+    @field_validator('fin')
+    @classmethod
     def validate_fin(cls, v):
         """Validiert FIN-Format (vereinfacht)."""
         if not v.replace('-', '').replace(' ', '').isalnum():
             raise ValueError('FIN muss alphanumerisch sein')
         return v.upper().replace('-', '').replace(' ', '')
     
-    @validator('baujahr')
-    def validate_baujahr(cls, v, values):
+    @field_validator('baujahr')
+    @classmethod
+    def validate_baujahr(cls, v, info: ValidationInfo):
         """Validiert Baujahr gegen Erstzulassung."""
-        if v and 'datum_erstzulassung' in values and values['datum_erstzulassung']:
-            if v > values['datum_erstzulassung'].year:
+        if v and info.data.get('datum_erstzulassung'):
+            if v > info.data['datum_erstzulassung'].year:
                 raise ValueError('Baujahr kann nicht nach Erstzulassung liegen')
         return v
 
@@ -121,11 +123,12 @@ class FahrzeugProzessCreate(BaseModel):
     notizen: Optional[str] = Field(None, max_length=1000, description="Prozess-Notizen")
     zusatz_daten: Optional[Dict[str, Any]] = Field(None, description="Zusätzliche strukturierte Daten")
     
-    @validator('ende_timestamp')
-    def validate_timestamps(cls, v, values):
+    @field_validator('ende_timestamp')
+    @classmethod
+    def validate_timestamps(cls, v, info: ValidationInfo):
         """Validiert dass Ende-Zeit nach Start-Zeit liegt."""
-        if v and 'start_timestamp' in values and values['start_timestamp']:
-            if v <= values['start_timestamp']:
+        if v and info.data.get('start_timestamp'):
+            if v <= info.data['start_timestamp']:
                 raise ValueError('Ende-Zeit muss nach Start-Zeit liegen')
         return v
 
