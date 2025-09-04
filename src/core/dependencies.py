@@ -12,6 +12,7 @@ from typing import Optional
 import structlog
 from src.services.bigquery_service import BigQueryService
 from src.services.vehicle_service import VehicleService
+from src.services.process_service import ProcessService
 
 # Strukturiertes Logging
 logger = structlog.get_logger(__name__)
@@ -19,6 +20,7 @@ logger = structlog.get_logger(__name__)
 # Global Service Instances (Singleton Pattern)
 _bigquery_service: Optional[BigQueryService] = None
 _vehicle_service: Optional[VehicleService] = None
+_process_service: Optional[ProcessService] = None
 
 @lru_cache()
 def get_bigquery_service() -> BigQueryService:
@@ -74,6 +76,33 @@ def get_vehicle_service() -> VehicleService:
             raise
     
     return _vehicle_service
+
+@lru_cache()
+def get_process_service() -> ProcessService:
+    """
+    Singleton Process Service mit Dependencies.
+    
+    Returns:
+        ProcessService: Business Logic Service für Prozesse
+    """
+    global _process_service
+    
+    if _process_service is None:
+        try:
+            vehicle_service = get_vehicle_service()
+            bigquery_service = get_bigquery_service()
+            _process_service = ProcessService(
+                vehicle_service=vehicle_service,
+                bigquery_service=bigquery_service
+            )
+            
+            logger.info("✅ Process Service initialisiert")
+            
+        except Exception as e:
+            logger.error("❌ Process Service Initialisierung fehlgeschlagen", error=str(e))
+            raise
+    
+    return _process_service
 
 # Health Check für alle Services
 async def check_all_services_health() -> dict:
