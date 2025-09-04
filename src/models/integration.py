@@ -110,11 +110,11 @@ class FahrzeugStammResponse(FahrzeugStammCreate, BaseTimestampModel):
 class FahrzeugProzessCreate(BaseModel):
     """Model für Fahrzeugprozess-Erstellung."""
     prozess_id: str = Field(..., min_length=1, max_length=100, description="Eindeutige Prozess-ID")
-    fin: str = Field(..., min_length=17, max_length=17, description="Fahrzeug-FIN")
+    fin: str = Field(..., min_length=17, max_length=21, description="Fahrzeug-FIN")
     prozess_typ: ProzessTyp = Field(..., description="Art des Prozesses")
     status: str = Field(..., min_length=1, max_length=100, description="Aktueller Status")
     bearbeiter: Optional[str] = Field(None, max_length=100, description="Zuständiger Bearbeiter")
-    prioritaet: Optional[int] = Field(5, ge=1, le=10, description="Priorität (1=höchste, 10=niedrigste)")
+    prioritaet: Optional[str] = Field(None, description="Priorität ")
     anlieferung_datum: Optional[date] = Field(None, description="Datum der Fahrzeug-Anlieferung")
     start_timestamp: Optional[datetime] = Field(None, description="Prozess-Startzeit")
     ende_timestamp: Optional[datetime] = Field(None, description="Prozess-Endzeit")
@@ -122,6 +122,22 @@ class FahrzeugProzessCreate(BaseModel):
     datenquelle: Optional[Datenquelle] = Field(Datenquelle.API, description="Quelle der Prozessdaten")
     notizen: Optional[str] = Field(None, max_length=1000, description="Prozess-Notizen")
     zusatz_daten: Optional[Dict[str, Any]] = Field(None, description="Zusätzliche strukturierte Daten")
+    
+    @field_validator('prioritaet')
+    @classmethod
+    def validate_priority_is_digit(cls, v):
+        """Validiert, dass die Priorität eine Zahl zwischen "1" und "9" ist."""
+        if v is None:
+            return v  # Erlaubt None-Werte
+        
+        if not v.isdigit():
+            raise ValueError(f'Priorität muss eine Zahl zwischen "1" und "9" sein, erhielt "{v}"')
+        
+        priority_int = int(v)
+        if not 1 <= priority_int <= 9:
+            raise ValueError(f'Priorität muss zwischen "1" und "9" liegen, erhielt "{v}"')
+        
+        return v
     
     @field_validator('ende_timestamp')
     @classmethod

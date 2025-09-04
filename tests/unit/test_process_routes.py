@@ -143,7 +143,7 @@ class TestProcessModels:
             prozess_typ="Aufbereitung",
             status="In Bearbeitung",
             bearbeiter="Thomas Küfner",
-            prioritaet=3,  # INT laut API!
+            prioritaet=3, 
             notizen="Direct API Call",
             zusatz_daten={"source": "manual", "test": True}
         )
@@ -159,12 +159,12 @@ class TestProcessModels:
     
     def test_unified_process_request_minimal(self):
         """Test: Minimales UnifiedProcessRequest"""
-        unified_data = {
+        minimal_data = {
             "fin": "TESTFIN1234567890",
             "prozess_typ": "Foto",
             "status": "Warteschlange"
         }
-        unified_req = UnifiedProcessRequest(**unified_data)
+        unified_req = UnifiedProcessRequest(**minimal_data) # type:ignore
         
         assert unified_req.fin == "TESTFIN1234567890"
         assert unified_req.prozess_typ == "Foto"
@@ -312,7 +312,6 @@ class TestProcessRouteHandlers:
         
         assert exc_info.value.status_code == 500
         assert "Webhook-Verarbeitung fehlgeschlagen" in exc_info.value.detail
-    
     @pytest.mark.asyncio
     @patch('src.api.routes.process.get_process_service')
     async def test_process_email_success(self, mock_get_service):
@@ -328,13 +327,15 @@ class TestProcessRouteHandlers:
         }
         mock_get_service.return_value = mock_service
         
-        # Minimales EmailProcessRequest mit Dictionary
-        email_dict = {
-            "email_content": "Fahrzeug FIN: TESTFIN1234567890 Status: Abgeschlossen",
-            "subject": "Aufbereitung fertig",
-            "sender": "werkstatt@reinhardt.de"
-        }
-        email_data = EmailProcessRequest(**email_dict)
+        # EmailProcessRequest mit korrekten Typen
+        email_data = EmailProcessRequest(
+            email_content="Fahrzeug FIN: TESTFIN1234567890 Status: Abgeschlossen",
+            subject="Aufbereitung fertig",
+            sender="werkstatt@reinhardt.de",
+            received_at=None,  
+            headers=None      
+            # received_at und headers weglassen - sind optional mit None als Default
+        )
         mock_background_tasks = Mock()
         
         # Echte Route Handler Signatur: (email_data, background_tasks, process_service)
@@ -358,12 +359,15 @@ class TestProcessRouteHandlers:
         mock_service.process_email_data.side_effect = ValueError("Keine gültige FIN gefunden")
         mock_get_service.return_value = mock_service
         
-        email_dict = {
-            "email_content": "Allgemeine Nachricht ohne FIN",
-            "subject": "Info",
-            "sender": "info@reinhardt.de"
-        }
-        email_data = EmailProcessRequest(**email_dict)
+        # EmailProcessRequest mit korrekten Typen
+        email_data = EmailProcessRequest(
+            email_content="Allgemeine Nachricht ohne FIN",
+            subject="Info",
+            sender="info@reinhardt.de",
+            received_at=None,  
+            headers=None  
+            # received_at und headers weglassen - sind optional mit None als Default
+        )
         mock_background_tasks = Mock()
         
         # HTTPException 422 erwartet
@@ -389,19 +393,19 @@ class TestProcessRouteHandlers:
         }
         mock_get_service.return_value = mock_service
         
-        unified_dict = {
+        request_dict = {
             "fin": "TESTFIN1234567890",
             "prozess_typ": "Verkauf",
             "status": "Angebot erstellt",
             "bearbeiter": "Max Mustermann",
             "prioritaet": 2  # INT!
         }
-        unified_data = UnifiedProcessRequest(**unified_dict)
+        request_obj = UnifiedProcessRequest(**request_dict)
         mock_background_tasks = Mock()
         
         # Echte Route Handler Signatur: (data, background_tasks, source="api", process_service)
         response = await process_unified_data(
-            unified_data, mock_background_tasks, "api", mock_service
+            request_obj, mock_background_tasks, "api", mock_service
         )
         
         # Assertions

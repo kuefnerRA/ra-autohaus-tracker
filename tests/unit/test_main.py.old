@@ -1,0 +1,199 @@
+# tests/unit/test_main.py
+"""
+Unit Tests für Main Application
+Reinhardt Automobile GmbH - RA Autohaus Tracker
+
+Diese Tests testen die tatsächlich existierenden Funktionen in main.py
+"""
+
+import pytest
+from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from fastapi.testclient import TestClient
+import os
+
+
+class TestMainApplication:
+    """Tests für Main Application Startup und Handlers"""
+    
+    @pytest.fixture
+    def client(self):
+        """Test Client mit Mocked Services"""
+        # Environment auf development setzen für Tests
+        os.environ["ENVIRONMENT"] = "development"
+        
+        # Services auf Modul-Ebene mocken
+        with patch('src.services.bigquery_service.BigQueryService') as mock_bq:
+            with patch('src.services.vehicle_service.VehicleService') as mock_vehicle:
+                with patch('src.services.process_service.ProcessService') as mock_process:
+                    # Mock Services konfigurieren
+                    mock_bq_instance = MagicMock()
+                    mock_vehicle_instance = MagicMock()
+                    mock_process_instance = MagicMock()
+                    
+                    # Health check Methoden mocken
+                    mock_bq_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+                    mock_vehicle_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+                    mock_process_instance.health_check = AsyncMock(return_value={"status": "healthy"})
+                    
+                    mock_bq.return_value = mock_bq_instance
+                    mock_vehicle.return_value = mock_vehicle_instance
+                    mock_process.return_value = mock_process_instance
+                    
+                    # App importieren NACH dem Patching
+                    from src.main import app
+                    
+                    # Services in main.py setzen (falls als globale Variablen verwendet)
+                    import src.main
+                    src.main.bigquery_service = mock_bq_instance
+                    src.main.vehicle_service = mock_vehicle_instance
+                    src.main.process_service = mock_process_instance
+                    
+                    return TestClient(app)
+    
+    # ===============================
+    # Health & Info Endpoint Tests
+    # ===============================
+    
+    def test_health_endpoint(self, client):
+        """Test: Health Check Endpoint"""
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] in ["healthy", "degraded"]
+        assert "environment" in data
+        assert "version" in data
+    
+    def test_root_endpoint(self, client):
+        """Test: Root Endpoint"""
+        response = client.get("/")
+        assert response.status_code == 200
+        data = response.json()
+        assert "service" in data
+        assert data["service"] == "RA Autohaus Tracker API"
+    
+    def test_info_endpoint(self, client):
+        """Test: Info Endpoint"""
+        response = client.get("/info")
+        assert response.status_code == 200
+        data = response.json()
+        assert "environment" in data
+        assert "version" in data
+        assert "services" in data
+    
+    # ===============================
+    # API Router Integration Tests
+    # ===============================
+    
+    def test_vehicles_router_included(self, client):
+        """Test: Vehicles Router ist eingebunden"""
+        # Prüfen ob ein Vehicle Endpoint erreichbar ist
+        response = client.get("/api/v1/fahrzeuge/")
+        # Sollte 200 oder zumindest nicht 404 sein
+        assert response.status_code != 404
+    
+    def test_process_router_included(self, client):
+        """Test: Process Router ist eingebunden"""
+        # Prüfen ob ein Process Endpoint erreichbar ist  
+        response = client.get("/api/v1/prozesse/health")
+        # Sollte 200 oder zumindest nicht 404 sein
+        assert response.status_code != 404
+    
+    # ===============================
+    # Error Handling Tests
+    # ===============================
+    
+    def test_404_handler(self, client):
+        """Test: 404 Error Handler"""
+        response = client.get("/nicht-existierender-endpoint")
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+    
+    # ===============================
+    # Environment-specific Tests
+    # ===============================
+    
+    def test_environment_variable_loaded(self, client):
+        """Test: Environment Variable wird korrekt geladen"""
+        response = client.get("/info")
+        data = response.json()
+        # Environment ist ein Dict mit mehreren Werten
+        assert "environment" in data
+        assert "environment" in data["environment"]
+        assert data["environment"]["environment"] in ["development", "staging", "production"]
+    
+    def test_version_info_available(self, client):
+        """Test: Version Information verfügbar"""
+        response = client.get("/info")
+        data = response.json()
+        # Version ist in application.version verschachtelt
+        assert "application" in data
+        assert "version" in data["application"]
+        assert data["application"]["version"] != ""
+    
+    # ===============================
+    # CORS Middleware Test
+    # ===============================
+    
+    def test_cors_headers_present(self, client):
+        """Test: CORS Headers sind gesetzt"""
+        response = client.options("/health")
+        # CORS Headers sollten vorhanden sein
+        # FastAPI setzt diese automatisch wenn CORSMiddleware aktiv ist
+        assert response.status_code in [200, 405]  # 405 wenn OPTIONS nicht explizit definiert
+
+
+# ===============================
+# Isolierte Unit Tests ohne Client
+# ===============================
+
+def test_configure_logging():
+    """Test: Logging wird konfiguriert"""
+    from src.main import configure_logging
+    
+    # Sollte ohne Fehler durchlaufen
+    try:
+        configure_logging()
+        assert True
+    except Exception as e:
+        pytest.fail(f"configure_logging raised {e}")
+
+
+@pytest.mark.asyncio
+async def test_startup_services_function():
+    """Test: Startup Services Funktion läuft ohne Fehler"""
+    with patch('src.services.bigquery_service.BigQueryService') as mock_bq:
+        with patch('src.services.vehicle_service.VehicleService') as mock_vehicle:
+            with patch('src.services.process_service.ProcessService') as mock_process:
+                
+                # Mock Instanzen
+                mock_bq.return_value = MagicMock()
+                mock_vehicle.return_value = MagicMock()
+                mock_process.return_value = MagicMock()
+                
+                # Import NACH dem Patching
+                from src.main import startup_services
+                
+                # Sollte ohne Fehler durchlaufen
+                try:
+                    await startup_services()
+                    assert True
+                except Exception as e:
+                    pytest.fail(f"startup_services raised {e}")
+
+
+@pytest.mark.asyncio
+async def test_shutdown_services_function():
+    """Test: Shutdown Services Funktion läuft ohne Fehler"""
+    with patch('src.services.bigquery_service.BigQueryService'):
+        with patch('src.services.vehicle_service.VehicleService'):
+            with patch('src.services.process_service.ProcessService'):
+                
+                from src.main import shutdown_services
+                
+                # Sollte ohne Fehler durchlaufen
+                try:
+                    await shutdown_services()
+                    assert True
+                except Exception as e:
+                    pytest.fail(f"shutdown_services raised {e}")

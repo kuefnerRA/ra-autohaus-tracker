@@ -1,0 +1,244 @@
+# tests/unit/test_main.py
+"""
+Unit Tests für main.py - Startup, Shutdown, Exception Handlers
+Ziel: Coverage von 52% auf 75%+
+"""
+
+import pytest
+import os
+from unittest.mock import patch, Mock, AsyncMock
+from fastapi.testclient import TestClient
+from fastapi import Request
+import json
+
+
+class TestMainApplication:
+    """Tests für main.py Application Lifecycle und Handlers"""
+    
+    @pytest.fixture
+    def test_client(self):
+        """Test Client mit Mock Services"""
+        with patch('src.main.startup_services', new_callable=AsyncMock):
+            with patch('src.main.shutdown_services', new_callable=AsyncMock):
+                from src.main import app
+                return TestClient(app)
+    
+    # ===============================
+    # Startup/Shutdown Tests (Zeilen 65-88)
+    # ===============================
+    
+    @patch('src.main.startup_services')
+    @patch('src.main.configure_logging')
+    async def test_lifespan_startup_success(self, mock_logging, mock_startup):
+        """Test: Erfolgreicher Application Startup"""
+        mock_startup.return_value = None
+        mock_logging.return_value = Mock()
+        
+        from src.main import lifespan, app
+        
+        async with lifespan(app) as _:
+            mock_startup.assert_called_once()
+            mock_logging.assert_called_once()
+    
+    @patch('src.main.startup_services')
+    @patch('src.main.shutdown_services')
+    async def test_lifespan_startup_failure(self, mock_shutdown, mock_startup):
+        """Test: Startup Fehler Handling"""
+        mock_startup.side_effect = Exception("Startup failed")
+        
+        from src.main import lifespan, app
+        
+        with pytest.raises(Exception, match="Startup failed"):
+            async with lifespan(app):
+                pass
+    
+    @patch('src.main.shutdown_services')
+    async def test_lifespan_shutdown_error_handling(self, mock_shutdown):
+        """Test: Shutdown Fehler wird geloggt aber nicht geworfen"""
+        mock_shutdown.side_effect = Exception("Shutdown error")
+        
+        from src.main import lifespan, app
+        
+        with patch('src.main.startup_services', new_callable=AsyncMock):
+            # Sollte keinen Fehler werfen
+            async with lifespan(app):
+                pass
+    
+    # ===============================
+    # Exception Handler Tests (Zeilen 166-178)
+    # ===============================
+    
+    def test_global_exception_handler_development(self, test_client):
+        """Test: Exception Handler in Development zeigt Details"""
+        with patch.dict(os.environ, {'ENVIRONMENT': 'development'}):
+            # Endpoint der Exception wirft
+            @test_client.app.get("/test-error")
+            def error_endpoint():
+                raise ValueError("Test error details")
+            
+            response = test_client.get("/test-error")
+            
+            assert response.status_code == 500
+            data = response.json()
+            assert "Test error details" in data["message"]
+            assert data["success"] is False
+    
+    def test_global_exception_handler_production(self):
+        """Test: Exception Handler in Production versteckt Details"""
+        with patch.dict(os.environ, {'ENVIRONMENT': 'production'}):
+            from src.main import app
+            client = TestClient(app)
+            
+            @app.get("/test-prod-error")
+            def error_endpoint():
+                raise ValueError("Secret internal error")
+            
+            response = client.get("/test-prod-error")
+            
+            assert response.status_code == 500
+            data = response.json()
+            assert "Secret internal error" not in data["message"]
+            assert "interner Serverfehler" in data["message"]
+    
+    # ===============================
+    # Middleware Tests (Zeilen 30-49)
+    # ===============================
+    
+    def test_configure_logging_production(self):
+        """Test: Logging Konfiguration für Production"""
+        with patch.dict(os.environ, {'ENVIRONMENT': 'production'}):
+            from src.main import configure_logging
+            
+            with patch('src.main.configure') as mock_configure:
+                logger = configure_logging()
+                
+                # Prüfe dass JSONRenderer verwendet wird
+                call_args = mock_configure.call_args
+                processors = call_args[1]['processors']
+                assert any('JSONRenderer' in str(p) for p in processors)
+    
+    def test_configure_logging_development(self):
+        """Test: Logging Konfiguration für Development"""
+        with patch.dict(os.environ, {'ENVIRONMENT': 'development'}):
+            from src.main import configure_logging
+            
+            with patch('src.main.configure') as mock_configure:
+                logger = configure_logging()
+                
+                # Prüfe dass ConsoleRenderer verwendet wird
+                call_args = mock_configure.call_args
+                processors = call_args[1]['processors']
+                assert any('ConsoleRenderer' in str(p) for p in processors)
+    
+    # ===============================
+    # Development Endpoints (Zeilen 322-335)
+    # ===============================
+    
+    def test_dev_reset_services_only_in_development(self):
+        """Test: Dev-Endpoints nur in Development verfügbar"""
+        # Production - Endpoint nicht vorhanden
+        with patch.dict(os.environ, {'ENVIRONMENT': 'production'}):
+            from src.main import app
+            client = TestClient(app)
+            response = client.get("/dev/reset-services")
+            assert response.status_code == 404
+        
+        # Development - Endpoint vorhanden
+        with patch.dict(os.environ, {'ENVIRONMENT': 'development'}):
+            from src.main import app
+            client = TestClient(app)
+            with patch('src.main.reset_services') as mock_reset:
+                with patch('src.main.startup_services', new_callable=AsyncMock):
+                    response = client.get("/dev/reset-services")
+                    assert response.status_code == 200
+    
+    @patch('src.main.reset_services')
+    @patch('src.main.startup_services')
+    async def test_dev_reset_services_success(self, mock_startup, mock_reset):
+        """Test: Erfolgreicher Service Reset"""
+        mock_reset.return_value = None
+        mock_startup.return_value = None
+        
+        with patch.dict(os.environ, {'ENVIRONMENT': 'development'}):
+            from src.main import app
+            client = TestClient(app)
+            
+            response = client.get("/dev/reset-services")
+            
+            assert response.status_code == 200
+            data = response.json()
+            assert "erfolgreich zurückgesetzt" in data["message"]
+            mock_reset.assert_called_once()
+            mock_startup.assert_called_once()
+    
+    def test_dev_reset_services_error_handling(self):
+        """Test: Error Handling beim Service Reset"""
+        with patch.dict(os.environ, {'ENVIRONMENT': 'development'}):
+            from src.main import app
+            client = TestClient(app)
+            
+            with patch('src.main.reset_services') as mock_reset:
+                mock_reset.side_effect = Exception("Reset failed")
+                
+                response = client.get("/dev/reset-services")
+                
+                assert response.status_code == 500
+                data = response.json()
+                assert "Reset failed" in data["error"]
+    
+    # ===============================
+    # Request Logging Middleware Tests
+    # ===============================
+    
+    def test_request_logging_debug_level(self, test_client):
+        """Test: Request Logging nur bei DEBUG Level"""
+        with patch.dict(os.environ, {'LOG_LEVEL': 'DEBUG'}):
+            with patch('src.main.logger') as mock_logger:
+                response = test_client.get("/health")
+                
+                # Debug log sollte aufgerufen werden
+                debug_calls = [call for call in mock_logger.debug.call_args_list 
+                              if 'HTTP Request' in str(call)]
+                assert len(debug_calls) > 0
+    
+    def test_request_logging_info_level(self, test_client):
+        """Test: Response Logging bei INFO Level"""
+        with patch.dict(os.environ, {'LOG_LEVEL': 'INFO'}):
+            with patch('src.main.logger') as mock_logger:
+                response = test_client.get("/health")
+                
+                # Info log für Response sollte aufgerufen werden
+                info_calls = [call for call in mock_logger.info.call_args_list 
+                             if 'HTTP Response' in str(call)]
+                assert len(info_calls) > 0
+    
+    # ===============================
+    # Health Check Error Tests
+    # ===============================
+    
+    @patch('src.main.check_all_services_health')
+    def test_health_check_exception_handling(self, mock_health, test_client):
+        """Test: Health Check Exception Handling"""
+        mock_health.side_effect = Exception("Health check failed")
+        
+        response = test_client.get("/health")
+        
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "unhealthy"
+        assert "Health check failed" in data["error"]
+    
+    # ===============================
+    # System Info Error Tests  
+    # ===============================
+    
+    @patch('src.main.get_service_info')
+    def test_system_info_error_handling(self, mock_info, test_client):
+        """Test: System Info Error Handling"""
+        mock_info.side_effect = Exception("Info retrieval failed")
+        
+        response = test_client.get("/info")
+        
+        assert response.status_code == 500
+        data = response.json()
+        assert "Info retrieval failed" in data["error"]
