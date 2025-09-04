@@ -21,8 +21,19 @@ from structlog.stdlib import filter_by_level, add_logger_name, add_log_level
 
 # Import der eigenen Module
 from src.core.dependencies import startup_services, shutdown_services, check_all_services_health
+from src.core.dependencies import (
+    get_bigquery_service,
+    get_vehicle_service,
+    get_process_service,
+    get_dashboard_service,
+    get_info_service,
+    reset_services
+)
+
 from src.api.routes.vehicles import router as vehicles_router
 from src.api.routes.process import router as process_router
+from src.api.routes.dashboard import router as dashboard_router
+from src.api.routes.info import router as info_router
 
 # Strukturiertes Logging konfigurieren
 def configure_logging():
@@ -217,6 +228,9 @@ async def log_requests(request: Request, call_next):
 # Router Registration
 app.include_router(vehicles_router, prefix="/api/v1")
 app.include_router(process_router, prefix="/api/v1")
+app.include_router(dashboard_router, prefix="/api/v1")
+app.include_router(info_router, prefix="/api/v1")
+
 
 # System Endpoints
 @app.get("/health", summary="System Health Check")

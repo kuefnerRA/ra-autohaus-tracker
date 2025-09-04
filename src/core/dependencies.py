@@ -13,6 +13,8 @@ import structlog
 from src.services.bigquery_service import BigQueryService
 from src.services.vehicle_service import VehicleService
 from src.services.process_service import ProcessService
+from src.services.dashboard_service import DashboardService
+from src.services.info_service import InfoService
 
 # Strukturiertes Logging
 logger = structlog.get_logger(__name__)
@@ -21,6 +23,8 @@ logger = structlog.get_logger(__name__)
 _bigquery_service: Optional[BigQueryService] = None
 _vehicle_service: Optional[VehicleService] = None
 _process_service: Optional[ProcessService] = None
+_dashboard_service: Optional[DashboardService] = None
+_info_service: Optional[InfoService] = None
 
 @lru_cache()
 def get_bigquery_service() -> BigQueryService:
@@ -103,6 +107,35 @@ def get_process_service() -> ProcessService:
             raise
     
     return _process_service
+
+@lru_cache()
+def get_dashboard_service() -> DashboardService:
+    """
+    Singleton DashboardService mit BigQuery-Dependency
+    
+    Returns:
+        DashboardService Instanz
+    """
+    global _dashboard_service
+    if _dashboard_service is None:
+        bigquery_service = get_bigquery_service()
+        _dashboard_service = DashboardService(bigquery_service)
+        logger.info("✅ DashboardService initialisiert (Singleton)")
+    return _dashboard_service
+
+@lru_cache()
+def get_info_service() -> InfoService:
+    """
+    Singleton InfoService (keine Dependencies)
+    
+    Returns:
+        InfoService Instanz
+    """
+    global _info_service
+    if _info_service is None:
+        _info_service = InfoService()
+        logger.info("✅ InfoService initialisiert (Singleton)")
+    return _info_service
 
 # Health Check für alle Services
 async def check_all_services_health() -> dict:
@@ -211,24 +244,23 @@ async def shutdown_services():
 
 def reset_services():
     """
-    Setzt alle Service-Singletons zurück (Development only).
-    
-    ⚠️ Nur für Development/Testing verwenden!
+    Reset alle Service-Instanzen (für Testing)
     """
-    global _bigquery_service, _vehicle_service
+    global _bigquery_service, _vehicle_service, _process_service, _dashboard_service, _info_service
     
-    logger.info("🔄 Services werden zurückgesetzt...")
-    
-    # Cache der lru_cache Funktionen leeren
-    get_bigquery_service.cache_clear()
-    get_vehicle_service.cache_clear()
-    
-    # Global Singletons zurücksetzen
     _bigquery_service = None
     _vehicle_service = None
+    _process_service = None
+    _dashboard_service = None
+    _info_service = None
     
-    logger.info("✅ Services erfolgreich zurückgesetzt")
-
+    # Clear LRU caches
+    get_bigquery_service.cache_clear()
+    get_vehicle_service.cache_clear()
+    get_process_service.cache_clear()
+    get_dashboard_service.cache_clear()
+    get_info_service.cache_clear()
+    
 
 def get_service_info() -> dict:
     """

@@ -587,3 +587,12 @@ class BigQueryService:
                 'mode': 'bigquery',
                 'error': str(e)
             }
+
+    async def execute_query(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
+            """Führt eine BigQuery-Abfrage aus"""
+            try:
+                logger.info(f"📊 Executing query: {query[:100]}...")
+                return []  # Mock für Entwicklung
+            except Exception as e:
+                logger.error(f"❌ Query-Fehler: {e}")
+                return []
