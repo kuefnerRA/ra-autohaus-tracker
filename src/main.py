@@ -7,6 +7,7 @@ Ersetze die bestehende src/main.py mit dieser erweiterten Version.
 
 import os
 import logging
+from dotenv import load_dotenv
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -35,6 +36,8 @@ from src.api.routes.process import router as process_router
 from src.api.routes.dashboard import router as dashboard_router
 from src.api.routes.info import router as info_router
 from src.api.routes.integration import router as integration_router
+
+load_dotenv()
 
 # Strukturiertes Logging konfigurieren
 def configure_logging():

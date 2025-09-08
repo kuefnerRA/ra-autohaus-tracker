@@ -136,20 +136,53 @@ uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload
 
 ## API-Endpoints
 
-### Aktuelle Endpoints (Phase 1)
-- **`GET /api/v1/fahrzeuge`** - Fahrzeugliste mit Filtern
-- **`GET /api/v1/fahrzeuge/{fin}`** - Fahrzeugdetails
-- **`POST /api/v1/fahrzeuge`** - Neues Fahrzeug erstellen
-- **`PUT /api/v1/fahrzeuge/{fin}/status`** - Status aktualisieren
-- **`GET /api/v1/fahrzeuge/kpis/overview`** - Fahrzeug-KPIs
-- **`GET /health`** - System Health Check
-- **`GET /docs`** - Interactive API Documentation
+## Implementierte API-Endpunkte (Stand: 04.09.2025)
 
-### Geplante Endpoints (Phase 2+)
-- **`GET /api/v1/dashboard/kpis`** - Dashboard-KPIs
-- **`GET /api/v1/dashboard/warteschlangen`** - Warteschlangen-Status
-- **`POST /api/v1/integration/zapier/webhook`** - Zapier Integration
-- **`POST /api/v1/integration/email/webhook`** - E-Mail Integration
+### 🚗 Fahrzeuge (7 Endpunkte)
+- GET `/api/v1/fahrzeuge/` - Fahrzeugliste mit Filtern
+- POST `/api/v1/fahrzeuge/` - Neues Fahrzeug erstellen  
+- GET `/api/v1/fahrzeuge/{fin}` - Fahrzeugdetails abrufen
+- PUT `/api/v1/fahrzeuge/{fin}/status` - Status aktualisieren
+- GET `/api/v1/fahrzeuge/kpis/overview` - Fahrzeug-KPIs
+- GET `/api/v1/fahrzeuge/statistics/summary` - Fahrzeug-Statistiken
+- GET `/api/v1/fahrzeuge/health` - Vehicle Service Health
+
+### 📋 Process Management (5 Endpunkte)
+- POST `/api/v1/process/zapier/webhook` - Zapier-Webhook (alt)
+- POST `/api/v1/process/email/parse` - Email-Parser (alt)
+- POST `/api/v1/process/unified` - Unified Data Processing
+- GET `/api/v1/process/health` - Process Service Health
+- GET `/api/v1/process/info` - Process Service Info
+
+### 📊 Dashboard (6 Endpunkte)
+- GET `/api/v1/dashboard/kpis` - Haupt-KPIs
+- GET `/api/v1/dashboard/warteschlangen` - Warteschlangen-Status
+- GET `/api/v1/dashboard/sla` - SLA-Übersicht
+- GET `/api/v1/dashboard/bearbeiter` - Bearbeiter-Workload
+- GET `/api/v1/dashboard/statistik/{prozess_typ}` - Prozess-Statistik
+- GET `/api/v1/dashboard/trends` - Trend-Analyse
+
+### ℹ️ Info (8 Endpunkte)
+- GET `/api/v1/info/prozesse` - Alle Prozess-Definitionen
+- GET `/api/v1/info/prozesse/{prozess_typ}` - Einzelne Prozess-Definition
+- GET `/api/v1/info/bearbeiter` - Alle Bearbeiter
+- GET `/api/v1/info/bearbeiter/{name}` - Einzelner Bearbeiter
+- GET `/api/v1/info/status` - Status-Definitionen
+- GET `/api/v1/info/system` - System-Konfiguration
+- GET `/api/v1/info/mappings` - Integration-Mappings
+- GET `/api/v1/info/health` - Info Service Health
+
+### 🔗 Integration (2 Endpunkte)
+- POST `/api/v1/integration/zapier/webhook` - Zapier-Integration (neu)
+- POST `/api/v1/integration/flowers/email` - Flowers Email-Integration
+
+### 🛠 System (4 Endpunkte)
+- GET `/` - API Root
+- GET `/health` - System Health-Check
+- GET `/info` - System Information
+- GET `/dev/reset-services` - [DEV] Service Reset
+
+**Gesamt: 32 implementierte Endpunkte**
 
 ## Geschäftsprozesse
 

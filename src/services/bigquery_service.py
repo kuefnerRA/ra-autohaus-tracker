@@ -76,6 +76,18 @@ class BigQueryService:
         
         self._init_client()
     
+    def _serialize_dates(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Konvertiert date/datetime Objekte zu Strings"""
+        from datetime import date, datetime
+        
+        result = {}
+        for key, value in data.items():
+            if isinstance(value, (date, datetime)):
+                result[key] = value.isoformat()
+            else:
+                result[key] = value
+        return result
+    
     def _init_client(self) -> None:
         """Initialisiert BigQuery Client mit Service Account Impersonation."""
         if self.use_mock:
@@ -227,6 +239,8 @@ class BigQueryService:
                 raise ValueError("FIN ist erforderlich")
             
             fin = fahrzeug_data['fin']
+            
+            fahrzeug_data = self._serialize_dates(fahrzeug_data)
             
             if self.use_mock:
                 return await self._create_fahrzeug_mock(fahrzeug_data)
@@ -589,10 +603,22 @@ class BigQueryService:
             }
 
     async def execute_query(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
-            """Führt eine BigQuery-Abfrage aus"""
-            try:
-                logger.info(f"📊 Executing query: {query[:100]}...")
-                return []  # Mock für Entwicklung
-            except Exception as e:
-                logger.error(f"❌ Query-Fehler: {e}")
+        """Führt eine BigQuery-Abfrage aus"""
+        try:
+            logger.info(f"📊 Executing query: {query[:100]}...")
+            
+            # Prüfe ob Client verfügbar
+            if not self.client:
+                logger.warning("⚠️ BigQuery Client nicht verfügbar - Mock-Daten")
                 return []
+            
+            # Echte BigQuery-Abfrage
+            query_job = self.client.query(query)
+            results = query_job.result()
+            
+            # In Liste von Dicts konvertieren
+            return [dict(row) for row in results]
+            
+        except Exception as e:
+            logger.error(f"❌ Query-Fehler: {e}")
+            return []
