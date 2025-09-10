@@ -102,21 +102,46 @@ class BigQueryService:
             return
             
         try:
-            # Service Account Impersonation verwenden falls konfiguriert
+            # ADC laden
+            source_credentials, project = google.auth.default()
+            
+            # Service Account Impersonation nur wenn nötig
             if self.service_account:
-                # ADC laden
-                source_credentials, _ = google.auth.default()
+                source_account = getattr(source_credentials, 'service_account_email', None)
                 
-                # Service Account impersonieren
-                target_credentials = impersonated_credentials.Credentials(
-                    source_credentials=source_credentials,
-                    target_principal=self.service_account,
-                    target_scopes=['https://www.googleapis.com/auth/bigquery']
+                self.logger.info("🔍 Credentials Analyse",
+                    source_type=type(source_credentials).__name__,
+                    source_account=source_account,
+                    target_account=self.service_account,
+                    needs_impersonation=(source_account != self.service_account)
                 )
                 
-                self.client = bigquery.Client(project=self.project_id, credentials=target_credentials)
-                self.logger.info("✅ BigQuery Client mit Service Account Impersonation initialisiert",
-                               service_account=self.service_account)
+                # Nur impersonieren wenn source != target
+                if source_account and source_account == self.service_account:
+                    # Bereits der richtige Service Account - keine Impersonation nötig!
+                    self.logger.info("✅ Verwende bereits impersonierte Credentials",
+                        service_account=self.service_account)
+                    self.client = bigquery.Client(project=self.project_id, credentials=source_credentials)
+                else:
+                    # Echte Impersonation nötig
+                    self.logger.info("🔄 Impersonation erforderlich",
+                        from_account=source_account or "user account",
+                        to_account=self.service_account)
+                    
+                    from google.auth.transport import requests
+                    
+                    target_credentials = impersonated_credentials.Credentials(
+                        source_credentials=source_credentials,
+                        target_principal=self.service_account,
+                        target_scopes=['https://www.googleapis.com/auth/bigquery'],
+                        lifetime=3600
+                    )
+                    
+                    request = requests.Request()
+                    target_credentials.refresh(request)
+                    
+                    self.client = bigquery.Client(project=self.project_id, credentials=target_credentials)
+                    self.logger.info("✅ BigQuery Client mit Impersonation initialisiert")
             else:
                 # Standard ADC verwenden
                 self.client = bigquery.Client(project=self.project_id)
@@ -127,14 +152,14 @@ class BigQueryService:
                 raise RuntimeError("BigQuery Client nicht initialisiert")
             dataset = self.client.get_dataset(self.dataset_ref)
             self.logger.info("✅ BigQuery Dataset-Verbindung erfolgreich", 
-                           dataset=dataset.dataset_id)
+                        dataset=dataset.dataset_id)
             
         except Exception as e:
             self.logger.error("❌ BigQuery Client Initialisierung fehlgeschlagen", error=str(e))
             self.logger.warning("🔄 Fallback zu Mock-Modus")
             self.use_mock = True
-            self._init_mock_data()
-    
+        self._init_mock_data()
+
     def _init_mock_data(self) -> None:
         """Initialisiert Mock-Daten für lokale Entwicklung."""
         self._mock_fahrzeuge = [
@@ -275,15 +300,11 @@ class BigQueryService:
                             error=str(e), fin=fahrzeug_data.get('fin'))
             raise
     
+    
+
     async def create_fahrzeug_prozess(self, prozess_data: Dict[str, Any]) -> bool:
         """
         Erstellt einen neuen Fahrzeugprozess.
-        
-        Args:
-            prozess_data: Prozessdaten als Dictionary
-            
-        Returns:
-            bool: True wenn erfolgreich
         """
         try:
             # Validierung
@@ -291,6 +312,9 @@ class BigQueryService:
             for field in required_fields:
                 if field not in prozess_data:
                     raise ValueError(f"Feld '{field}' ist erforderlich")
+            
+            # Serialisiere Dates/DateTime BEVOR prepare_row
+            prozess_data = self._serialize_dates(prozess_data)
             
             if self.use_mock:
                 return await self._create_prozess_mock(prozess_data)
@@ -308,8 +332,8 @@ class BigQueryService:
                 raise GoogleAPIError(f"Insert-Fehler: {errors}")
             
             self.logger.info("✅ Fahrzeugprozess erstellt", 
-                           prozess_id=prozess_data['prozess_id'],
-                           fin=prozess_data['fin'])
+                        prozess_id=prozess_data['prozess_id'],
+                        fin=prozess_data['fin'])
             
             return True
             
@@ -318,7 +342,7 @@ class BigQueryService:
                             error=str(e), 
                             prozess_id=prozess_data.get('prozess_id'))
             raise
-    
+
     async def get_fahrzeug_by_fin(self, fin: str) -> Optional[Dict[str, Any]]:
         """
         Holt Fahrzeugdaten anhand der FIN.
@@ -437,6 +461,103 @@ class BigQueryService:
             self.logger.error("❌ Fehler beim Abrufen der Fahrzeuge mit Prozessen", error=str(e))
             return []
     
+    async def get_prozesse_by_fin(
+        self, 
+        fin: str, 
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Holt alle Prozesse eines Fahrzeugs.
+        """
+        try:
+            if self.use_mock:
+                return [p for p in self._mock_prozesse if p['fin'] == fin][:limit]
+            
+            query = f"""
+            SELECT *
+            FROM `{self.dataset_ref}.fahrzeug_prozesse`
+            WHERE fin = @fin
+            ORDER BY aktualisiert_am DESC
+            LIMIT {limit}
+            """
+            
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fin", "STRING", fin)
+                ]
+            )
+            
+            if not self.client:
+                raise RuntimeError("BigQuery Client nicht verfügbar")
+            
+            query_job = self.client.query(query, job_config=job_config)
+            results = query_job.result()
+            
+            prozesse = []
+            for row in results:
+                prozess = dict(row)
+                
+                # Datentyp-Korrekturen
+                if 'prioritaet' in prozess and prozess['prioritaet'] is not None:
+                    prozess['prioritaet'] = str(prozess['prioritaet'])
+                
+                if 'zusatz_daten' in prozess and isinstance(prozess['zusatz_daten'], str):
+                    import json
+                    try:
+                        prozess['zusatz_daten'] = json.loads(prozess['zusatz_daten'])
+                    except (json.JSONDecodeError, TypeError):
+                        prozess['zusatz_daten'] = None
+                
+                prozesse.append(prozess)
+            
+            return prozesse
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Abrufen der Prozesse", 
+                            error=str(e))
+            return []
+
+    async def get_prozess_by_id(
+        self, 
+        prozess_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Holt einen spezifischen Prozess.
+        """
+        try:
+            if self.use_mock:
+                return next((p for p in self._mock_prozesse 
+                        if p['prozess_id'] == prozess_id), None)
+            
+            query = f"""
+            SELECT *
+            FROM `{self.dataset_ref}.fahrzeug_prozesse`
+            WHERE prozess_id = @prozess_id
+            LIMIT 1
+            """
+            
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("prozess_id", "STRING", prozess_id)
+                ]
+            )
+            
+            if not self.client:
+                raise RuntimeError("BigQuery Client nicht verfügbar")
+            
+            query_job = self.client.query(query, job_config=job_config)
+            results = query_job.result()
+            
+            for row in results:
+                return dict(row)
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Abrufen des Prozesses", 
+                            error=str(e))
+            return None
+
     # Helper Methods
     def _prepare_fahrzeug_row(self, fahrzeug_data: Dict[str, Any]) -> Dict[str, Any]:
         """Bereitet Fahrzeugdaten für BigQuery vor."""

@@ -15,7 +15,7 @@ import structlog
 from src.services.bigquery_service import BigQueryService
 from src.models.integration import (
     FahrzeugStammCreate, FahrzeugStammResponse,
-    FahrzeugProzessCreate, FahrzeugProzessResponse,
+    FahrzeugProzessCreate, FahrzeugProzessResponse, FahrzeugProzessRequest,
     FahrzeugMitProzess, ProzessTyp, KPIData, ValidationError
 )
 
@@ -296,6 +296,206 @@ class VehicleService:
             self.logger.error("❌ Fehler beim Berechnen der Fahrzeug-KPIs", error=str(e))
             return []
     
+    async def create_vehicle_process(
+        self,
+        fin: str,
+        prozess_data: FahrzeugProzessCreate
+    ) -> FahrzeugProzessResponse:
+        """
+        Erstellt einen neuen Prozess für ein bestehendes Fahrzeug.
+        
+        Args:
+            fin: Fahrzeugidentifizierungsnummer
+            prozess_data: Prozessdaten
+            
+        Returns:
+            FahrzeugProzessResponse: Erstellter Prozess mit SLA-Daten
+        """
+        try:
+            # Validierung
+            if not self._validate_fin(fin):
+                raise ValueError(f"Ungültige FIN: {fin}")
+            
+            # Prüfen ob Fahrzeug existiert
+            fahrzeug = await self.bigquery_service.get_fahrzeug_by_fin(fin)
+            if not fahrzeug:
+                raise ValueError(f"Fahrzeug mit FIN {fin} nicht gefunden")
+            
+            # Prozess-ID generieren falls nicht vorhanden
+            if not prozess_data.prozess_id:
+                prozess_data.prozess_id = self._generate_process_id(
+                    fin, 
+                    prozess_data.prozess_typ
+                )
+            
+            # Prozess-Daten vorbereiten
+            prozess_dict = prozess_data.model_dump(exclude_none=True)
+            prozess_dict['fin'] = fin  # FIN sicherstellen
+            
+            # SLA-Daten berechnen
+            prozess_dict = await self._calculate_sla_data(prozess_dict)
+            
+            # Bearbeiter normalisieren
+            if prozess_dict.get('bearbeiter'):
+                prozess_dict['bearbeiter'] = self._normalize_bearbeiter_name(
+                    prozess_dict['bearbeiter']
+                )
+            
+            # Zeitstempel setzen
+            now = datetime.now()
+            prozess_dict['start_timestamp'] = now
+            prozess_dict['erstellt_am'] = now
+            prozess_dict['aktualisiert_am'] = now
+            
+            # In BigQuery speichern
+            success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
+            
+            if not success:
+                raise RuntimeError("Prozess konnte nicht gespeichert werden")
+            
+            # Response-Objekt erstellen
+            response = FahrzeugProzessResponse(**prozess_dict)
+            
+            self.logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
+                        fin=fin,
+                        prozess_id=response.prozess_id,
+                        prozess_typ=response.prozess_typ,
+                        sla_deadline=response.sla_deadline_datum)
+            
+            return response
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Erstellen des Fahrzeugprozesses", 
+                            error=str(e), 
+                            fin=fin)
+            raise
+
+    async def get_vehicle_process_history(
+        self, 
+        fin: str, 
+        limit: int = 50
+    ) -> List[FahrzeugProzessResponse]:
+        """
+        Holt die komplette Prozess-Historie eines Fahrzeugs.
+        """
+        try:
+            # Fahrzeug prüfen
+            if not await self.bigquery_service.get_fahrzeug_by_fin(fin):
+                raise ValueError(f"Fahrzeug {fin} nicht gefunden")
+            
+            # Prozesse aus BigQuery holen
+            prozesse = await self.bigquery_service.get_prozesse_by_fin(fin, limit)
+            
+            # In Response-Objekte konvertieren
+            result = []
+            for prozess in prozesse:
+                # SLA-Daten anreichern
+                prozess = await self._calculate_sla_data(prozess)
+                result.append(FahrzeugProzessResponse(**prozess))
+            
+            self.logger.info("✅ Prozess-Historie abgerufen", 
+                        fin=fin, 
+                        count=len(result))
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Abrufen der Prozess-Historie", 
+                            error=str(e))
+            raise
+
+    async def update_vehicle_process(
+        self,
+        fin: str,
+        prozess_id: str,
+        prozess_update: FahrzeugProzessRequest
+    ) -> Optional[FahrzeugProzessResponse]:
+        """
+        Aktualisiert einen bestehenden Prozess.
+        
+        Erstellt einen neuen Prozess-Eintrag mit aktualisiertem Status
+        (für Audit-Trail).
+        """
+        try:
+            # Aktuellen Prozess holen
+            current = await self.bigquery_service.get_prozess_by_id(prozess_id)
+            if not current:
+                return None
+            
+            # Neue Prozess-ID für Update generieren
+            new_prozess_id = self._generate_process_id(
+                fin, 
+                prozess_update.prozess_typ,
+                suffix="update"
+            )
+            
+            # Update-Daten vorbereiten
+            prozess_dict = prozess_update.model_dump(exclude_none=True)
+            prozess_dict['prozess_id'] = new_prozess_id
+            prozess_dict['fin'] = fin
+            prozess_dict['parent_prozess_id'] = prozess_id  # Referenz zum Original
+            
+            # Zeitstempel
+            now = datetime.now()
+            prozess_dict['aktualisiert_am'] = now
+            prozess_dict['erstellt_am'] = current.get('erstellt_am', now)
+            
+            # SLA neu berechnen
+            prozess_dict = await self._calculate_sla_data(prozess_dict)
+            
+            # Speichern
+            success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
+            
+            if success:
+                return FahrzeugProzessResponse(**prozess_dict)
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Update des Prozesses", 
+                            error=str(e))
+            raise
+
+    async def complete_vehicle_process(
+        self,
+        fin: str,
+        prozess_id: str,
+        abschluss_notiz: Optional[str] = None
+    ) -> bool:
+        """
+        Schließt einen Prozess ab.
+        """
+        try:
+            # Prozess holen für korrekten Typ
+            current = await self.bigquery_service.get_prozess_by_id(prozess_id)
+            if not current:
+                return False
+                
+            # Type Hint für Pylance
+            from typing import cast
+            update_data: FahrzeugProzessRequest = cast(
+                FahrzeugProzessRequest,
+                {
+                    "prozess_typ": current.get('prozess_typ', ProzessTyp.VERKAUF),
+                    "status": "Abgeschlossen",
+                    "notizen": abschluss_notiz or "Prozess abgeschlossen"
+                }
+            )
+            
+            # Prozess holen für korrekten Typ
+            current = await self.bigquery_service.get_prozess_by_id(prozess_id)
+            if current:
+                update_data.prozess_typ = current['prozess_typ']
+            
+            updated = await self.update_vehicle_process(fin, prozess_id, update_data)
+            
+            return updated is not None
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Abschließen des Prozesses", 
+                            error=str(e))
+            raise
+
     # Private Helper Methods
     
     async def _enrich_vehicle_data(self, fahrzeug_raw: Dict[str, Any]) -> FahrzeugMitProzess:

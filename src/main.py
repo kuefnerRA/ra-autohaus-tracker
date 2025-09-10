@@ -36,6 +36,7 @@ from src.api.routes.process import router as process_router
 from src.api.routes.dashboard import router as dashboard_router
 from src.api.routes.info import router as info_router
 from src.api.routes.integration import router as integration_router
+from src.api.routes.email import router as email_router
 
 load_dotenv()
 
@@ -235,6 +236,7 @@ app.include_router(process_router, prefix="/api/v1")
 app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(info_router, prefix="/api/v1")
 app.include_router(integration_router, prefix="/api/v1")
+app.include_router(email_router, prefix="/api/v1")
 
 
 # System Endpoints

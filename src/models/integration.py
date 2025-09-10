@@ -157,6 +157,46 @@ class FahrzeugProzessResponse(FahrzeugProzessCreate, BaseTimestampModel):
     erstellt_am: Optional[datetime] = None
     aktualisiert_am: Optional[datetime] = None
 
+# Request Models (für API Endpoints)
+class FahrzeugProzessRequest(BaseModel):
+    """Model für Fahrzeugprozess-Erstellung via API (nur Request Body)."""
+    prozess_typ: ProzessTyp = Field(..., description="Art des Prozesses")
+    status: str = Field(..., min_length=1, max_length=100, description="Aktueller Status")
+    bearbeiter: Optional[str] = Field(None, max_length=100, description="Zuständiger Bearbeiter")
+    prioritaet: Optional[str] = Field(None, description="Priorität")
+    anlieferung_datum: Optional[date] = Field(None, description="Datum der Fahrzeug-Anlieferung")
+    start_timestamp: Optional[datetime] = Field(None, description="Prozess-Startzeit")
+    ende_timestamp: Optional[datetime] = Field(None, description="Prozess-Endzeit")
+    sla_tage: Optional[int] = Field(None, gt=0, description="SLA-Vorgabe in Tagen")
+    datenquelle: Optional[Datenquelle] = Field(Datenquelle.API, description="Quelle der Prozessdaten")
+    notizen: Optional[str] = Field(None, max_length=1000, description="Prozess-Notizen")
+    zusatz_daten: Optional[Dict[str, Any]] = Field(None, description="Zusätzliche strukturierte Daten")
+    
+    @field_validator('prioritaet')
+    @classmethod
+    def validate_priority_is_digit(cls, v):
+        """Validiert, dass die Priorität eine Zahl zwischen "1" und "9" ist."""
+        if v is None:
+            return v
+        
+        if not v.isdigit():
+            raise ValueError(f'Priorität muss eine Zahl zwischen "1" und "9" sein, erhielt "{v}"')
+        
+        priority_int = int(v)
+        if not 1 <= priority_int <= 9:
+            raise ValueError(f'Priorität muss zwischen "1" und "9" liegen, erhielt "{v}"')
+        
+        return v
+    
+    @field_validator('ende_timestamp')
+    @classmethod
+    def validate_timestamps(cls, v, info: ValidationInfo):
+        """Validiert dass Ende-Zeit nach Start-Zeit liegt."""
+        if v and info.data.get('start_timestamp'):
+            if v <= info.data['start_timestamp']:
+                raise ValueError('Ende-Zeit muss nach Start-Zeit liegen')
+        return v
+
 # Combined Models
 class FahrzeugMitProzess(BaseModel):
     """Model für Fahrzeug mit aktuellem Prozess."""

@@ -16,7 +16,7 @@ from src.core.dependencies import get_vehicle_service
 from src.services.vehicle_service import VehicleService
 from src.models.integration import (
     FahrzeugStammCreate, FahrzeugStammResponse,
-    FahrzeugProzessCreate, FahrzeugProzessResponse,
+    FahrzeugProzessCreate, FahrzeugProzessResponse, FahrzeugProzessRequest,
     FahrzeugMitProzess, KPIData, StandardResponse
 )
 
@@ -216,6 +216,81 @@ async def update_vehicle_status(
             detail=f"Fehler beim Status-Update: {str(e)}"
         )
 
+@router.post(
+    "/{fin}/prozess",
+    response_model=FahrzeugProzessResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Prozess für Fahrzeug erstellen",
+    description="Erstellt einen neuen Prozess für ein bestehendes Fahrzeug."
+)
+async def create_vehicle_process(
+    fin: str,
+    prozess_request: FahrzeugProzessRequest,  # <- Verwende FahrzeugProzessRequest
+    vehicle_service: VehicleService = Depends(get_vehicle_service)
+) -> FahrzeugProzessResponse:
+    """
+    Erstellt einen neuen Prozess für ein Fahrzeug.
+    
+    **Parameter:**
+    - `fin`: Fahrzeugidentifizierungsnummer (aus URL)
+    - `prozess_request`: Prozessdaten (aus Request Body)
+    
+    **Request Body:**
+    - `prozess_typ`: Art des Prozesses (Einkauf, Aufbereitung, Foto, etc.)
+    - `status`: Prozess-Status
+    - `bearbeiter`: Optional - Zuständiger Bearbeiter
+    - `prioritaet`: Optional - Priorität (1-9)
+    - `notizen`: Optional - Notizen zum Prozess
+    
+    **Rückgabe:** Erstellter Prozess mit allen Daten inkl. SLA
+    """
+    try:
+        # Prüfen ob Fahrzeug existiert
+        fahrzeug = await vehicle_service.get_vehicle_details(fin)
+        if not fahrzeug:
+            logger.error("❌ Fahrzeug nicht gefunden für Prozess-Erstellung", fin=fin)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Fahrzeug mit FIN {fin} nicht gefunden"
+            )
+        
+        # Konvertiere Request zu vollständigem FahrzeugProzessCreate
+        prozess_data = FahrzeugProzessCreate(
+            prozess_id=vehicle_service._generate_process_id(fin, prozess_request.prozess_typ),
+            fin=fin,
+            **prozess_request.model_dump()
+        )
+        
+        # Prozess erstellen
+        created_process = await vehicle_service.create_vehicle_process(
+            fin=fin,
+            prozess_data=prozess_data
+        )
+        
+        logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
+                   fin=fin,
+                   prozess_id=created_process.prozess_id,
+                   prozess_typ=prozess_request.prozess_typ)
+        
+        return created_process
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error("❌ Validierungsfehler beim Prozess-Erstellen", 
+                    fin=fin, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error("❌ Fehler beim Erstellen des Fahrzeugprozesses", 
+                    fin=fin, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Fehler beim Erstellen des Prozesses: {str(e)}"
+        )
+
 @router.get(
     "/kpis/overview",
     response_model=List[KPIData],
@@ -360,4 +435,156 @@ async def vehicle_api_health_check(
                 'error': str(e)
             },
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+    
+@router.get(
+    "/{fin}/prozesse",
+    response_model=List[FahrzeugProzessResponse],
+    summary="Prozess-Historie abrufen",
+    description="Holt alle Prozesse eines Fahrzeugs (chronologisch sortiert)."
+)
+async def get_vehicle_processes(
+    fin: str,
+    limit: int = Query(50, ge=1, le=200, description="Maximale Anzahl Ergebnisse"),
+    vehicle_service: VehicleService = Depends(get_vehicle_service)
+) -> List[FahrzeugProzessResponse]:
+    """
+    Holt die komplette Prozess-Historie eines Fahrzeugs.
+    
+    **Parameter:**
+    - `fin`: Fahrzeugidentifizierungsnummer
+    - `limit`: Maximale Anzahl Prozesse (1-200)
+    
+    **Rückgabe:** Liste aller Prozesse chronologisch sortiert
+    """
+    try:
+        prozesse = await vehicle_service.get_vehicle_process_history(fin, limit)
+        
+        if not prozesse:
+            logger.info("ℹ️ Keine Prozesse für Fahrzeug gefunden", fin=fin)
+            return []
+        
+        logger.info("✅ Prozess-Historie abgerufen", 
+                   fin=fin, 
+                   prozess_count=len(prozesse))
+        
+        return prozesse
+        
+    except Exception as e:
+        logger.error("❌ Fehler beim Abrufen der Prozess-Historie", 
+                    fin=fin, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Fehler beim Abrufen der Prozess-Historie: {str(e)}"
+        )    
+    
+@router.put(
+"/{fin}/prozess/{prozess_id}",
+response_model=FahrzeugProzessResponse,
+summary="Prozess aktualisieren",
+description="Aktualisiert einen bestehenden Fahrzeugprozess."
+)
+
+async def update_vehicle_process(
+    fin: str,
+    prozess_id: str,
+    prozess_update: FahrzeugProzessRequest,
+    vehicle_service: VehicleService = Depends(get_vehicle_service)
+) -> FahrzeugProzessResponse:
+    """
+    Aktualisiert einen bestehenden Prozess.
+    
+    **Parameter:**
+    - `fin`: Fahrzeugidentifizierungsnummer
+    - `prozess_id`: Prozess-ID
+    - `prozess_update`: Neue Prozessdaten
+    
+    **Rückgabe:** Aktualisierter Prozess
+    """
+    try:
+        updated_process = await vehicle_service.update_vehicle_process(
+            fin=fin,
+            prozess_id=prozess_id,
+            prozess_update=prozess_update
+        )
+        
+        if not updated_process:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Prozess {prozess_id} für Fahrzeug {fin} nicht gefunden"
+            )
+        
+        logger.info("✅ Prozess erfolgreich aktualisiert", 
+                   fin=fin,
+                   prozess_id=prozess_id,
+                   new_status=prozess_update.status)
+        
+        return updated_process
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("❌ Fehler beim Aktualisieren des Prozesses", 
+                    fin=fin, 
+                    prozess_id=prozess_id,
+                    error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Fehler beim Aktualisieren: {str(e)}"
+        )
+    
+@router.delete(
+"/{fin}/prozess/{prozess_id}",
+response_model=StandardResponse,
+summary="Prozess beenden",
+description="Beendet einen Fahrzeugprozess (setzt Status auf 'Abgeschlossen')."
+)
+
+async def complete_vehicle_process(
+    fin: str,
+    prozess_id: str,
+    abschluss_notiz: Optional[str] = Query(None, description="Abschluss-Notiz"),
+    vehicle_service: VehicleService = Depends(get_vehicle_service)
+) -> StandardResponse:
+    """
+    Beendet einen Prozess (markiert als abgeschlossen).
+    
+    **Parameter:**
+    - `fin`: Fahrzeugidentifizierungsnummer
+    - `prozess_id`: Prozess-ID
+    - `abschluss_notiz`: Optional - Notiz zum Abschluss
+    
+    **Rückgabe:** Erfolgs-Bestätigung
+    """
+    try:
+        success = await vehicle_service.complete_vehicle_process(
+            fin=fin,
+            prozess_id=prozess_id,
+            abschluss_notiz=abschluss_notiz
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Prozess {prozess_id} nicht gefunden"
+            )
+        
+        logger.info("✅ Prozess erfolgreich abgeschlossen", 
+                   fin=fin,
+                   prozess_id=prozess_id)
+        
+        return StandardResponse(
+            success=True,
+            message=f"Prozess {prozess_id} erfolgreich abgeschlossen",
+            timestamp=datetime.now()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("❌ Fehler beim Abschließen des Prozesses", 
+                    error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Fehler beim Abschließen: {str(e)}"
         )
