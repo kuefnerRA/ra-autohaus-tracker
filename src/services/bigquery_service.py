@@ -300,7 +300,220 @@ class BigQueryService:
                             error=str(e), fin=fahrzeug_data.get('fin'))
             raise
     
-    
+    async def update_fahrzeug_stamm(
+        self, 
+        fin: str, 
+        update_data: Dict[str, Any],
+        log_changes: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Aktualisiert Fahrzeugstammdaten mit Change-Tracking.
+        
+        Args:
+            fin: Fahrzeugidentifizierungsnummer
+            update_data: Zu aktualisierende Felder
+            log_changes: Ob Änderungen geloggt werden sollen
+            
+        Returns:
+            Dict mit update_result und change_log
+        """
+        try:
+            # Aktuelles Fahrzeug abrufen für Vergleich
+            current_vehicle = await self.get_fahrzeug_by_fin(fin)
+            
+            if not current_vehicle:
+                raise ValueError(f"Fahrzeug mit FIN {fin} nicht gefunden")
+            
+            # Change-Log erstellen
+            change_log = []
+            fields_updated = []
+            
+            # Timestamps
+            now = datetime.utcnow()
+            update_data['updated_at'] = now.isoformat()
+            
+            # Serialisiere Dates
+            update_data = self._serialize_dates(update_data)
+            
+            if self.use_mock:
+                # Mock-Update
+                for field, new_value in update_data.items():
+                    if field in ['updated_at', 'fin']:
+                        continue
+                        
+                    old_value = current_vehicle.get(field)
+                    if old_value != new_value and new_value is not None:
+                        change_log.append({
+                            'field': field,
+                            'old_value': old_value,
+                            'new_value': new_value,
+                            'timestamp': now.isoformat()
+                        })
+                        fields_updated.append(field)
+                
+                # Mock-Daten aktualisieren
+                vehicle_index = next(i for i, v in enumerate(self._mock_fahrzeuge) 
+                                if v['fin'] == fin)
+                self._mock_fahrzeuge[vehicle_index].update(update_data)
+                
+            else:
+                # BigQuery UPDATE via DML
+                set_clauses = []
+                parameters = []
+                
+                for field, new_value in update_data.items():
+                    if field in ['fin', 'created_at']:  # FIN und created_at nie ändern
+                        continue
+                        
+                    old_value = current_vehicle.get(field)
+                    
+                    # Nur wenn Wert sich ändert und nicht None ist
+                    if old_value != new_value and new_value is not None:
+                        set_clauses.append(f"{field} = @{field}")
+                        
+                        # Parameter-Typ bestimmen
+                        if isinstance(new_value, bool):
+                            param_type = "BOOL"
+                        elif isinstance(new_value, Decimal):
+                            param_type = "NUMERIC"
+                            new_value = str(new_value)  # BigQuery erwartet NUMERIC als String
+                        elif isinstance(new_value, float):
+                            # Prüfe ob es ein Geldfeld ist
+                            if field in ['ek_netto', 'vk_netto', 'ek_brutto', 'vk_brutto']:
+                                param_type = "NUMERIC"
+                                new_value = str(new_value)
+                            else:
+                                param_type = "FLOAT64"
+                        elif isinstance(new_value, int):
+                            param_type = "INT64"
+                        elif isinstance(new_value, (datetime, date)):
+                            param_type = "TIMESTAMP" if isinstance(new_value, datetime) else "DATE"
+                            new_value = new_value.isoformat()
+                        else:
+                            param_type = "STRING"
+                            new_value = str(new_value) if new_value is not None else None
+                        
+                        parameters.append(
+                            bigquery.ScalarQueryParameter(field, param_type, new_value)
+                        )
+                        
+                        # Für Change-Log
+                        change_log.append({
+                            'field': field,
+                            'old_value': old_value,
+                            'new_value': new_value,
+                            'timestamp': now.isoformat()
+                        })
+                        fields_updated.append(field)
+                
+                if not set_clauses:
+                    self.logger.info("ℹ️ Keine Änderungen für Fahrzeug", fin=fin)
+                    return {
+                        'success': True,
+                        'fin': fin,
+                        'changes_made': False,
+                        'fields_updated': [],
+                        'change_log': []
+                    }
+                
+                # UPDATE Query ausführen
+                query = f"""
+                UPDATE `{self.dataset_ref}.fahrzeuge_stamm`
+                SET {', '.join(set_clauses)}
+                WHERE fin = @fin AND aktiv = TRUE
+                """
+                
+                # FIN als Parameter hinzufügen
+                parameters.append(
+                    bigquery.ScalarQueryParameter("fin", "STRING", fin)
+                )
+                
+                job_config = bigquery.QueryJobConfig(query_parameters=parameters)
+                
+                if not self.client:
+                    raise RuntimeError("BigQuery Client nicht verfügbar")
+                    
+                query_job = self.client.query(query, job_config=job_config)
+                query_job.result()  # Warte auf Abschluss
+                
+                # Optional: Change-Log in separate Tabelle speichern
+                if log_changes and change_log:
+                    await self._log_vehicle_changes(fin, change_log)
+            
+            self.logger.info("✅ Fahrzeug-Stammdaten aktualisiert", 
+                            fin=fin,
+                            fields_updated=fields_updated,
+                            changes_count=len(change_log))
+            
+            return {
+                'success': True,
+                'fin': fin,
+                'changes_made': len(change_log) > 0,
+                'fields_updated': fields_updated,
+                'change_log': change_log
+            }
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Update der Fahrzeug-Stammdaten", 
+                            error=str(e), fin=fin)
+            raise
+
+    async def _log_vehicle_changes(self, fin: str, changes: List[Dict[str, Any]]) -> None:
+        """
+        Speichert Änderungshistorie in separater Tabelle (optional).
+        
+        Tabelle 'fahrzeug_aenderungen' sollte folgende Struktur haben:
+        - change_id: STRING
+        - fin: STRING  
+        - field_name: STRING
+        - old_value: STRING
+        - new_value: STRING
+        - changed_at: TIMESTAMP
+        - changed_by: STRING
+        """
+        try:
+            if self.use_mock:
+                # In Mock-Modus nur loggen
+                self.logger.info("🧪 Mock: Änderungen würden geloggt", 
+                            fin=fin, changes_count=len(changes))
+                return
+            
+            # Prüfe ob Änderungs-Tabelle existiert
+            table_id = f"{self.dataset_ref}.fahrzeug_aenderungen"
+            
+            rows_to_insert = []
+            for change in changes:
+                rows_to_insert.append({
+                    'change_id': f"{fin}_{change['field']}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                    'fin': fin,
+                    'field_name': change['field'],
+                    'old_value': str(change['old_value']) if change['old_value'] is not None else None,
+                    'new_value': str(change['new_value']) if change['new_value'] is not None else None,
+                    'changed_at': change['timestamp'],
+                    'changed_by': 'email_import',  # Könnte aus Context kommen
+                    'created_at': datetime.utcnow().isoformat()
+                })
+            
+            if not self.client:
+                raise RuntimeError("BigQuery Client nicht verfügbar")
+                
+            # Versuche in Änderungs-Tabelle zu schreiben
+            try:
+                table = self.client.get_table(table_id)
+                errors = self.client.insert_rows_json(table, rows_to_insert)
+                
+                if errors:
+                    self.logger.warning("⚠️ Fehler beim Logging der Änderungen", errors=errors)
+                else:
+                    self.logger.info("📝 Änderungshistorie gespeichert", 
+                                fin=fin, entries=len(rows_to_insert))
+            except NotFound:
+                # Tabelle existiert nicht - nur loggen
+                self.logger.debug("Änderungs-Tabelle existiert nicht, Logging übersprungen")
+                
+        except Exception as e:
+            # Fehler beim Logging sollten Update nicht verhindern
+            self.logger.warning("⚠️ Änderungs-Logging fehlgeschlagen", error=str(e))
 
     async def create_fahrzeug_prozess(self, prozess_data: Dict[str, Any]) -> bool:
         """
@@ -576,7 +789,7 @@ class BigQueryService:
             'anzahl_fahrzeugschluessel': fahrzeug_data.get('anzahl_fahrzeugschluessel'),
             'bereifungsart': fahrzeug_data.get('bereifungsart'),
             'anzahl_vorhalter': fahrzeug_data.get('anzahl_vorhalter'),
-            'ek_netto': float(fahrzeug_data['ek_netto']) if fahrzeug_data.get('ek_netto') else None,
+            'ek_netto': str(fahrzeug_data['ek_netto']) if fahrzeug_data.get('ek_netto') else None,
             'besteuerungsart': fahrzeug_data.get('besteuerungsart'),
             'ersterfassung_datum': now.isoformat(),
             'aktiv': True,

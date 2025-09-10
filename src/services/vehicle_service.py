@@ -16,7 +16,8 @@ from src.services.bigquery_service import BigQueryService
 from src.models.integration import (
     FahrzeugStammCreate, FahrzeugStammResponse,
     FahrzeugProzessCreate, FahrzeugProzessResponse, FahrzeugProzessRequest,
-    FahrzeugMitProzess, ProzessTyp, KPIData, ValidationError
+    FahrzeugMitProzess, ProzessTyp, KPIData, ValidationError,
+    Datenquelle
 )
 
 # Strukturiertes Logging
@@ -186,6 +187,124 @@ class VehicleService:
                             fin=fahrzeug_data.fin)
             raise
     
+    async def update_vehicle(
+        self,
+        fin: str,
+        update_data: Dict[str, Any],
+        create_update_process: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Aktualisiert Fahrzeugstammdaten mit Business-Validierung.
+        
+        Args:
+            fin: Fahrzeugidentifizierungsnummer
+            update_data: Zu aktualisierende Felder
+            create_update_process: Ob ein Update-Prozess erstellt werden soll
+            
+        Returns:
+            Dict mit Update-Ergebnis und Change-Log
+        """
+        try:
+            # FIN-Validierung
+            if not self._validate_fin(fin):
+                raise ValueError(f"Ungültige FIN: {fin}")
+            
+            # Fahrzeug muss existieren
+            existing = await self.bigquery_service.get_fahrzeug_by_fin(fin)
+            if not existing:
+                raise ValueError(f"Fahrzeug {fin} nicht gefunden - Update nicht möglich")
+            
+            # Validierung der Update-Daten
+            validation_errors = await self._validate_update_data(fin, update_data)
+            if validation_errors:
+                raise ValueError(f"Validierungsfehler: {validation_errors}")
+            
+            # Datentyp-Konvertierungen für Geldbeträge
+            money_fields = ['ek_netto', 'vk_netto', 'ek_brutto', 'vk_brutto']
+            for field in money_fields:
+                if field in update_data and update_data[field] is not None:
+                    # Konvertiere zu Decimal für BigQuery NUMERIC
+                    update_data[field] = Decimal(str(update_data[field]))
+                        
+            # Update durchführen
+            update_result = await self.bigquery_service.update_fahrzeug_stamm(
+                fin=fin,
+                update_data=update_data,
+                log_changes=True
+            )
+            
+            # Optional: Update-Prozess erstellen für Audit-Trail
+            if create_update_process and update_result['changes_made']:
+                prozess_data = FahrzeugProzessCreate(
+                    prozess_id=self._generate_process_id(fin, "UPDATE"),
+                    fin=fin,
+                    prozess_typ=ProzessTyp.AUFBEREITUNG,  # Default für Updates
+                    status="Daten aktualisiert",
+                    bearbeiter="System - Email Import",
+                    prioritaet="5",
+                    anlieferung_datum=None,  # Optional
+                    start_timestamp=datetime.now(),  # Setze aktuellen Zeitpunkt
+                    ende_timestamp=None,  # Optional
+                    sla_tage=None,  # Wird später berechnet
+                    datenquelle=Datenquelle.EMAIL,  # Verwende Enum statt String
+                    notizen=f"Fahrzeugdaten aktualisiert: {', '.join(update_result['fields_updated'])}",
+                    zusatz_daten=None  # Optional
+                )
+                
+                await self.create_vehicle_process(fin, prozess_data)
+            
+            self.logger.info("✅ Fahrzeug erfolgreich aktualisiert", 
+                            fin=fin,
+                            fields_updated=update_result['fields_updated'])
+            
+            return update_result
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Fahrzeug-Update", 
+                            error=str(e), fin=fin)
+            raise
+
+    async def _validate_update_data(
+        self, 
+        fin: str, 
+        update_data: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Validiert Update-Daten gegen Geschäftsregeln.
+        
+        Returns:
+            Liste von Validierungsfehlern (leer wenn alles OK)
+        """
+        errors = []
+        
+        # Baujahr-Plausibilität
+        if 'baujahr' in update_data:
+            current_year = date.today().year
+            if update_data['baujahr'] > current_year + 1:
+                errors.append(f"Baujahr {update_data['baujahr']} liegt in der Zukunft")
+            elif update_data['baujahr'] < 1900:
+                errors.append(f"Baujahr {update_data['baujahr']} ist unrealistisch")
+        
+        # Kilometerstand darf nicht negativ sein
+        if 'km_stand' in update_data and update_data['km_stand'] is not None:
+            if update_data['km_stand'] < 0:
+                errors.append("Kilometerstand kann nicht negativ sein")
+        
+        # EK-Preis Plausibilität
+        if 'ek_netto' in update_data and update_data['ek_netto'] is not None:
+            ek_value = float(update_data['ek_netto'])
+            if ek_value < 0:
+                errors.append("Einkaufspreis kann nicht negativ sein")
+            elif ek_value > 1000000:
+                errors.append(f"Einkaufspreis {ek_value} EUR erscheint unrealistisch hoch")
+        
+        # Anzahl Schlüssel Plausibilität
+        if 'anzahl_fahrzeugschluessel' in update_data:
+            if update_data['anzahl_fahrzeugschluessel'] > 10:
+                errors.append("Mehr als 10 Fahrzeugschlüssel sind ungewöhnlich")
+        
+        return errors
+
     async def update_vehicle_status(
         self,
         fin: str,

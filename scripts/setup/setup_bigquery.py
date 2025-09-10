@@ -93,18 +93,25 @@ def setup_bigquery():
         # 5. Tabelle: fahrzeug_prozesse
         print("\n⚙️ Erstelle Tabelle 'fahrzeug_prozesse'...")
         create_fahrzeug_prozesse_table(client, dataset_id)
-        
-        # 6. Beispieldaten einfügen
+
+        # 6. NEU: Tabelle: fahrzeug_aenderungen
+        print("\n📝 Erstelle Tabelle 'fahrzeug_aenderungen' für Change-Tracking...")
+        create_fahrzeug_aenderungen_table(client, dataset_id)
+
+        # 7. Beispieldaten einfügen
         print("\n📝 Füge Beispieldaten ein...")
         insert_sample_data(client, dataset_id)
         
-        # 7. Verbindung testen
+        # 8. Verbindung testen
         print("\n🧪 Teste Verbindung...")
         test_connection(client, dataset_id)
         
         print("\n🎉 BigQuery Setup erfolgreich abgeschlossen!")
         print(f"   Dataset: {dataset_id}")
-        print("   Tabellen: fahrzeuge_stamm, fahrzeug_prozesse")
+        print("   Tabellen:")
+        print("   - fahrzeuge_stamm (Fahrzeugstammdaten)")
+        print("   - fahrzeug_prozesse (Prozessverlauf)")
+        print("   - fahrzeug_aenderungen (Änderungshistorie)")
         print("   Beispieldaten: 3 Fahrzeuge mit Prozessen")
         
         return True
@@ -193,6 +200,50 @@ def create_fahrzeug_prozesse_table(client: bigquery.Client, dataset_id: str):
     try:
         table = client.create_table(table)
         print(f"✅ Tabelle '{table.table_id}' erstellt")
+    except Conflict:
+        print(f"ℹ️ Tabelle '{table_id}' existiert bereits")
+
+def create_fahrzeug_aenderungen_table(client: bigquery.Client, dataset_id: str):
+    """Erstellt die fahrzeug_aenderungen Tabelle für Change-Tracking."""
+    
+    table_id = f"{dataset_id}.fahrzeug_aenderungen"
+    
+    schema = [
+        bigquery.SchemaField("change_id", "STRING", mode="REQUIRED", 
+                           description="Eindeutige ID der Änderung (FIN_FIELD_TIMESTAMP)"),
+        bigquery.SchemaField("fin", "STRING", mode="REQUIRED",
+                           description="Fahrzeugidentifizierungsnummer"),
+        bigquery.SchemaField("field_name", "STRING", mode="REQUIRED",
+                           description="Name des geänderten Feldes"),
+        bigquery.SchemaField("old_value", "STRING", mode="NULLABLE",
+                           description="Alter Wert (als String)"),
+        bigquery.SchemaField("new_value", "STRING", mode="NULLABLE",
+                           description="Neuer Wert (als String)"),
+        bigquery.SchemaField("changed_at", "TIMESTAMP", mode="REQUIRED",
+                           description="Zeitpunkt der Änderung"),
+        bigquery.SchemaField("changed_by", "STRING", mode="NULLABLE",
+                           description="Quelle/Benutzer der Änderung (z.B. email_import, api, manual)"),
+        bigquery.SchemaField("created_at", "TIMESTAMP", mode="NULLABLE",
+                           description="Zeitpunkt der Protokollierung"),
+    ]
+    
+    table = bigquery.Table(table_id, schema=schema)
+    
+    # Partitionierung nach changed_at für effiziente Abfragen
+    table.time_partitioning = bigquery.TimePartitioning(
+        type_=bigquery.TimePartitioningType.DAY,
+        field="changed_at"
+    )
+    
+    # Clustering für optimierte Abfragen nach FIN und Feldname
+    table.clustering_fields = ["fin", "field_name", "changed_by"]
+    
+    # Beschreibung
+    table.description = "Audit-Log für Änderungen an Fahrzeugstammdaten"
+    
+    try:
+        table = client.create_table(table)
+        print(f"✅ Tabelle '{table.table_id}' für Change-Tracking erstellt")
     except Conflict:
         print(f"ℹ️ Tabelle '{table_id}' existiert bereits")
 

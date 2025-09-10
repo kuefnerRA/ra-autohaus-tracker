@@ -207,7 +207,14 @@ class FahrzeugMitProzess(BaseModel):
     antriebsart: Optional[str] = None
     farbe: Optional[str] = None
     baujahr: Optional[int] = None
+    datum_erstzulassung: Optional[date] = None  # <- Hinzufügen
+    kw_leistung: Optional[int] = None  # <- Hinzufügen
+    km_stand: Optional[int] = None  # <- Hinzufügen
+    anzahl_fahrzeugschluessel: Optional[int] = None  # <- Hinzufügen
+    bereifungsart: Optional[str] = None  # <- Hinzufügen
+    anzahl_vorhalter: Optional[int] = None  # <- Hinzufügen
     ek_netto: Optional[Decimal] = None
+    besteuerungsart: Optional[str] = None  # <- Hinzufügen
     
     # Prozess-Daten (aktueller Prozess)
     prozess_id: Optional[str] = None

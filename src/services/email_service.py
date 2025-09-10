@@ -313,45 +313,57 @@ class EmailService:
                         
                         if existing:
                             # Update existierendes Fahrzeug
-                            # TODO: Implement update logic
-                            results['fahrzeuge_updated'] += 1
-                            self.logger.info("ℹ️ Fahrzeug existiert bereits, Update", 
-                                          fin=fahrzeug_dict['fin'])
+                            self.logger.info("🔄 Fahrzeug existiert - starte Update", 
+                                            fin=fahrzeug_dict['fin'])
+                            
+                            # Bereite Update-Daten vor (nur geänderte Felder)
+                            update_data = {}
+                            for field, new_value in fahrzeug_dict.items():
+                                if field in ['fin', 'created_at', 'erstellt_aus_email']:
+                                    continue  # Diese Felder nie updaten
+                                
+                                # Prüfe ob Feld im existierenden Fahrzeug leer ist oder sich unterscheidet
+                                existing_value = existing.__dict__.get(field) if hasattr(existing, '__dict__') else None
+                                
+                                if new_value is not None and new_value != existing_value:
+                                    update_data[field] = new_value
+                            
+                            if update_data:
+                                # Update durchführen
+                                update_result = await vehicle_service.update_vehicle(
+                                    fin=fahrzeug_dict['fin'],
+                                    update_data=update_data,
+                                    create_update_process=True
+                                )
+                                
+                                if update_result['changes_made']:
+                                    results['fahrzeuge_updated'] += 1
+                                    self.logger.info("✅ Fahrzeug aktualisiert", 
+                                                fin=fahrzeug_dict['fin'],
+                                                fields_updated=update_result['fields_updated'])
+                                else:
+                                    self.logger.info("ℹ️ Keine Änderungen notwendig", 
+                                                fin=fahrzeug_dict['fin'])
+                            else:
+                                self.logger.info("ℹ️ Keine neuen Daten zum Update", 
+                                            fin=fahrzeug_dict['fin'])
                         else:
-                            # Neues Fahrzeug erstellen
+                            # Neues Fahrzeug erstellen (bestehender Code)
                             fahrzeug = FahrzeugStammCreate(**fahrzeug_dict)
                             created = await vehicle_service.create_complete_vehicle(
                                 fahrzeug_data=fahrzeug,
-                                prozess_data=None  # Prozess separat erstellen
+                                prozess_data=None
                             )
                             
                             if created:
                                 results['fahrzeuge_created'] += 1
-                        
-                        # Prozess erstellen falls vorhanden
-                        if prozess_dict and fahrzeug_dict['fin']:
-                            prozess = FahrzeugProzessRequest(**prozess_dict)
-                            prozess_created = await vehicle_service.create_vehicle_process(
-                                fin=fahrzeug_dict['fin'],
-                                prozess_data=FahrzeugProzessCreate(
-                                    prozess_id=vehicle_service._generate_process_id(
-                                        fahrzeug_dict['fin'], 
-                                        prozess_dict['prozess_typ']
-                                    ),
-                                    fin=fahrzeug_dict['fin'],
-                                    **prozess_dict
-                                )
-                            )
                             
-                            if prozess_created:
-                                results['prozesse_created'] += 1
+                            # Email als gelesen markieren und verschieben
+                            mail.store(email_id, '+FLAGS', '\\Seen')
+                            self._move_email(mail, email_id, self.processed_folder)
+                            
+                        results['processed'] += 1
                         
-                        # Email als gelesen markieren und verschieben
-                        mail.store(email_id, '+FLAGS', '\\Seen')
-                        self._move_email(mail, email_id, self.processed_folder)
-                        
-                    results['processed'] += 1
-                    
                 except Exception as e:
                     self.logger.error("❌ Fehler bei Email-Verarbeitung", 
                                     email_id=email_id, 
