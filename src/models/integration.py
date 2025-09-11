@@ -109,7 +109,7 @@ class FahrzeugStammResponse(FahrzeugStammCreate, BaseTimestampModel):
 # Prozess Models
 class FahrzeugProzessCreate(BaseModel):
     """Model für Fahrzeugprozess-Erstellung."""
-    prozess_id: str = Field(..., min_length=1, max_length=100, description="Eindeutige Prozess-ID")
+    prozess_id: Optional[str] = Field(None, min_length=1, max_length=100, description="Eindeutige Prozess-ID")
     fin: str = Field(..., min_length=17, max_length=21, description="Fahrzeug-FIN")
     prozess_typ: ProzessTyp = Field(..., description="Art des Prozesses")
     status: str = Field(..., min_length=1, max_length=100, description="Aktueller Status")

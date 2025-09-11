@@ -348,11 +348,20 @@ class EmailService:
                                 self.logger.info("ℹ️ Keine neuen Daten zum Update", 
                                             fin=fahrzeug_dict['fin'])
                         else:
-                            # Neues Fahrzeug erstellen (bestehender Code)
+                            # Neues Fahrzeug erstellen
                             fahrzeug = FahrzeugStammCreate(**fahrzeug_dict)
+                            
+                            # Prozess-Daten vorbereiten falls vorhanden
+                            prozess_to_create = None
+                            if prozess_dict:
+                                prozess_to_create = FahrzeugProzessCreate(
+                                    fin=fahrzeug_dict['fin'],
+                                    **prozess_dict
+                                )
+                            
                             created = await vehicle_service.create_complete_vehicle(
                                 fahrzeug_data=fahrzeug,
-                                prozess_data=None
+                                prozess_data=prozess_to_create  # <- Hier den Prozess übergeben!
                             )
                             
                             if created:

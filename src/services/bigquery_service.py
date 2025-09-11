@@ -417,10 +417,13 @@ class BigQueryService:
                     }
                 
                 # UPDATE Query ausführen
+                # Statt UPDATE, verwende MERGE
                 query = f"""
-                UPDATE `{self.dataset_ref}.fahrzeuge_stamm`
-                SET {', '.join(set_clauses)}
-                WHERE fin = @fin AND aktiv = TRUE
+                MERGE `{self.dataset_ref}.fahrzeuge_stamm` T
+                USING (SELECT @fin AS fin) S
+                ON T.fin = S.fin
+                WHEN MATCHED THEN
+                UPDATE SET {', '.join(set_clauses)}
                 """
                 
                 # FIN als Parameter hinzufügen

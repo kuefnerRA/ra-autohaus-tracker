@@ -53,12 +53,16 @@ class ZapierHandler:
         if "data" in payload:
             return payload["data"]
         
-        # Direkte Felder verwenden
+        # Direkte Felder verwenden - angepasst an process_service.py Erwartungen
         return {
             "fin": payload.get("fin") or payload.get("fahrzeug_fin"),
-            "prozess_typ": payload.get("prozess_typ") or payload.get("prozess"),
+            "prozess_typ": payload.get("prozess_typ") or payload.get("prozess_name"),  # prozess_name wird zu prozess_typ
             "status": payload.get("status") or payload.get("neuer_status"),
             "bearbeiter": payload.get("bearbeiter") or payload.get("bearbeiter_name"),
+            "prioritaet": payload.get("prioritaet"),
+            "notizen": payload.get("notizen"),
+            "timestamp": payload.get("timestamp"),
+            "trigger_type": payload.get("trigger_type"),
             "marke": payload.get("marke"),
             "modell": payload.get("modell")
         }

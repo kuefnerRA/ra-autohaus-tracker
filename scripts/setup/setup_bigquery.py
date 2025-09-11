@@ -98,11 +98,15 @@ def setup_bigquery():
         print("\n📝 Erstelle Tabelle 'fahrzeug_aenderungen' für Change-Tracking...")
         create_fahrzeug_aenderungen_table(client, dataset_id)
 
-        # 7. Beispieldaten einfügen
+        # 7. Monitoring Views erstellen
+        print("\n📊 Erstelle Monitoring Views...")
+        create_monitoring_views(client, dataset_id)
+
+        # 8. Beispieldaten einfügen
         print("\n📝 Füge Beispieldaten ein...")
         insert_sample_data(client, dataset_id)
         
-        # 8. Verbindung testen
+        # 9. Verbindung testen
         print("\n🧪 Teste Verbindung...")
         test_connection(client, dataset_id)
         
@@ -112,6 +116,11 @@ def setup_bigquery():
         print("   - fahrzeuge_stamm (Fahrzeugstammdaten)")
         print("   - fahrzeug_prozesse (Prozessverlauf)")
         print("   - fahrzeug_aenderungen (Änderungshistorie)")
+        print("   Views:")
+        print("   - v_prozess_pipeline (Prozess-Pipeline)")
+        print("   - v_prozesslaufzeiten (Laufzeiten-Analyse)")
+        print("   - v_prozess_gesamtlaufzeiten (Gesamtlaufzeiten)")
+        print("   - v_sla_monitoring (SLA-Überwachung)")        
         print("   Beispieldaten: 3 Fahrzeuge mit Prozessen")
         
         return True
@@ -246,6 +255,179 @@ def create_fahrzeug_aenderungen_table(client: bigquery.Client, dataset_id: str):
         print(f"✅ Tabelle '{table.table_id}' für Change-Tracking erstellt")
     except Conflict:
         print(f"ℹ️ Tabelle '{table_id}' existiert bereits")
+
+def create_monitoring_views(client: bigquery.Client, dataset_id: str):
+    """Erstellt Views für Business Monitoring."""
+    
+    print("\n📊 Erstelle Monitoring Views...")
+    
+    # View 1: Prozess-Pipeline
+    view_id = f"{dataset_id}.v_prozess_pipeline"
+    view_query = f"""
+    WITH aktuelle_prozesse AS (
+      SELECT 
+        fin,
+        prozess_typ,
+        status,
+        bearbeiter,
+        start_timestamp,
+        ROW_NUMBER() OVER (PARTITION BY fin ORDER BY aktualisiert_am DESC) as rn
+      FROM `{dataset_id}.fahrzeug_prozesse`
+    )
+    SELECT 
+      prozess_typ,
+      CASE 
+        WHEN UPPER(status) IN ('WARTESCHLANGE', 'GESTARTET', 'ANGELEGT', 'WARTEND', 'NEU') 
+          THEN 'WARTESCHLANGE'
+        WHEN UPPER(status) IN ('AKTIV', 'IN BEARBEITUNG', 'LAUFEND', 'IN ARBEIT')
+          THEN 'AKTIV'
+        ELSE UPPER(status)
+      END as status_normalisiert,
+      COUNT(DISTINCT fin) as anzahl_fahrzeuge,
+      COUNT(DISTINCT CASE WHEN bearbeiter IS NOT NULL THEN fin END) as mit_bearbeiter,
+      COUNT(DISTINCT CASE WHEN bearbeiter IS NULL THEN fin END) as ohne_bearbeiter
+    FROM aktuelle_prozesse
+    WHERE rn = 1
+    GROUP BY prozess_typ, status_normalisiert
+    ORDER BY prozess_typ, status_normalisiert
+    """
+    
+    try:
+        view = bigquery.Table(view_id)
+        view.view_query = view_query
+        client.create_table(view)
+        print(f"✅ View 'v_prozess_pipeline' erstellt")
+    except Conflict:
+        # View aktualisieren wenn sie existiert
+        view = client.get_table(view_id)
+        view.view_query = view_query
+        client.update_table(view, ["view_query"])
+        print(f"✅ View 'v_prozess_pipeline' aktualisiert")
+    
+    # View 2: Prozesslaufzeiten
+    view_id = f"{dataset_id}.v_prozesslaufzeiten"
+    view_query = f"""
+    SELECT 
+      prozess_typ,
+      CASE 
+        WHEN UPPER(status) IN ('WARTESCHLANGE', 'GESTARTET', 'ANGELEGT', 'WARTEND') 
+          THEN 'WARTESCHLANGE'
+        WHEN UPPER(status) IN ('AKTIV', 'IN BEARBEITUNG', 'LAUFEND')
+          THEN 'AKTIV'
+        ELSE UPPER(status)
+      END as status_normalisiert,
+      
+      -- Zeitraum-Kategorisierung
+      CASE 
+        WHEN DATE(start_timestamp) = CURRENT_DATE() THEN 'Heute'
+        WHEN DATE(start_timestamp) = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) THEN 'Gestern'
+        WHEN DATE_TRUNC(start_timestamp, WEEK) = DATE_TRUNC(CURRENT_DATE(), WEEK) THEN 'Diese Woche'
+        WHEN DATE_TRUNC(start_timestamp, WEEK) = DATE_TRUNC(DATE_SUB(CURRENT_DATE(), INTERVAL 1 WEEK), WEEK) THEN 'Letzte Woche'
+        WHEN DATE_TRUNC(start_timestamp, MONTH) = DATE_TRUNC(CURRENT_DATE(), MONTH) THEN 'Dieser Monat'
+        ELSE 'Älter'
+      END as zeitraum,
+      
+      -- Laufzeit-Metriken (nur für abgeschlossene Teilprozesse)
+      AVG(DATETIME_DIFF(ende_timestamp, start_timestamp, MINUTE)) as avg_laufzeit_minuten,
+      MIN(DATETIME_DIFF(ende_timestamp, start_timestamp, MINUTE)) as min_laufzeit_minuten,
+      MAX(DATETIME_DIFF(ende_timestamp, start_timestamp, MINUTE)) as max_laufzeit_minuten,
+      APPROX_QUANTILES(DATETIME_DIFF(ende_timestamp, start_timestamp, MINUTE), 100)[OFFSET(50)] as median_laufzeit_minuten,
+      COUNT(*) as anzahl_messungen
+      
+    FROM `{dataset_id}.fahrzeug_prozesse`
+    WHERE ende_timestamp IS NOT NULL
+      AND start_timestamp IS NOT NULL
+    GROUP BY prozess_typ, status_normalisiert, zeitraum
+    """
+    
+    try:
+        view = bigquery.Table(view_id)
+        view.view_query = view_query
+        client.create_table(view)
+        print(f"✅ View 'v_prozesslaufzeiten' erstellt")
+    except Conflict:
+        view = client.get_table(view_id)
+        view.view_query = view_query
+        client.update_table(view, ["view_query"])
+        print(f"✅ View 'v_prozesslaufzeiten' aktualisiert")
+    
+    # View 3: Prozess-Gesamtlaufzeiten
+    view_id = f"{dataset_id}.v_prozess_gesamtlaufzeiten"
+    view_query = f"""
+    WITH prozess_laufzeiten AS (
+      SELECT 
+        fin,
+        prozess_typ,
+        SUM(DATETIME_DIFF(ende_timestamp, start_timestamp, MINUTE)) as gesamt_laufzeit_minuten,
+        MIN(start_timestamp) as prozess_start,
+        MAX(ende_timestamp) as prozess_ende,
+        COUNT(*) as anzahl_teilprozesse
+      FROM `{dataset_id}.fahrzeug_prozesse`
+      WHERE ende_timestamp IS NOT NULL
+      GROUP BY fin, prozess_typ
+    )
+    SELECT 
+      prozess_typ,
+      DATE_TRUNC(prozess_start, WEEK) as woche,
+      AVG(gesamt_laufzeit_minuten) as avg_gesamtlaufzeit_minuten,
+      AVG(gesamt_laufzeit_minuten/60.0) as avg_gesamtlaufzeit_stunden,
+      COUNT(*) as anzahl_prozesse
+    FROM prozess_laufzeiten
+    GROUP BY prozess_typ, woche
+    ORDER BY prozess_typ, woche DESC
+    """
+    
+    try:
+        view = bigquery.Table(view_id)
+        view.view_query = view_query
+        client.create_table(view)
+        print(f"✅ View 'v_prozess_gesamtlaufzeiten' erstellt")
+    except Conflict:
+        view = client.get_table(view_id)
+        view.view_query = view_query
+        client.update_table(view, ["view_query"])
+        print(f"✅ View 'v_prozess_gesamtlaufzeiten' aktualisiert")
+    
+    # View 4: SLA-Monitoring
+    view_id = f"{dataset_id}.v_sla_monitoring"
+    view_query = f"""
+    SELECT 
+      f.fin,
+      f.marke,
+      f.modell,
+      p.prozess_typ,
+      p.status,
+      p.bearbeiter,
+      p.sla_deadline_datum,
+      p.tage_bis_sla_deadline,
+      p.standzeit_tage,
+      CASE 
+        WHEN p.tage_bis_sla_deadline < 0 THEN 'ÜBERFÄLLIG'
+        WHEN p.tage_bis_sla_deadline = 0 THEN 'HEUTE FÄLLIG'
+        WHEN p.tage_bis_sla_deadline = 1 THEN 'MORGEN FÄLLIG'
+        ELSE 'OK'
+      END as sla_status,
+      p.aktualisiert_am
+    FROM `{dataset_id}.fahrzeuge_stamm` f
+    JOIN (
+      SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY fin ORDER BY aktualisiert_am DESC) as rn
+      FROM `{dataset_id}.fahrzeug_prozesse`
+    ) p ON f.fin = p.fin AND p.rn = 1
+    WHERE f.aktiv = TRUE
+    ORDER BY p.tage_bis_sla_deadline ASC
+    """
+    
+    try:
+        view = bigquery.Table(view_id)
+        view.view_query = view_query
+        client.create_table(view)
+        print(f"✅ View 'v_sla_monitoring' erstellt")
+    except Conflict:
+        view = client.get_table(view_id)
+        view.view_query = view_query
+        client.update_table(view, ["view_query"])
+        print(f"✅ View 'v_sla_monitoring' aktualisiert")
 
 def insert_sample_data(client: bigquery.Client, dataset_id: str):
     """Fügt Beispieldaten ein."""

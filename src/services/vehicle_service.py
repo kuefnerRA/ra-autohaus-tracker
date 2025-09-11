@@ -234,24 +234,24 @@ class VehicleService:
             )
             
             # Optional: Update-Prozess erstellen für Audit-Trail
-            if create_update_process and update_result['changes_made']:
-                prozess_data = FahrzeugProzessCreate(
-                    prozess_id=self._generate_process_id(fin, "UPDATE"),
-                    fin=fin,
-                    prozess_typ=ProzessTyp.AUFBEREITUNG,  # Default für Updates
-                    status="Daten aktualisiert",
-                    bearbeiter="System - Email Import",
-                    prioritaet="5",
-                    anlieferung_datum=None,  # Optional
-                    start_timestamp=datetime.now(),  # Setze aktuellen Zeitpunkt
-                    ende_timestamp=None,  # Optional
-                    sla_tage=None,  # Wird später berechnet
-                    datenquelle=Datenquelle.EMAIL,  # Verwende Enum statt String
-                    notizen=f"Fahrzeugdaten aktualisiert: {', '.join(update_result['fields_updated'])}",
-                    zusatz_daten=None  # Optional
-                )
-                
-                await self.create_vehicle_process(fin, prozess_data)
+#            if create_update_process and update_result['changes_made']:
+#                prozess_data = FahrzeugProzessCreate(
+#                    prozess_id=self._generate_process_id(fin, "UPDATE"),
+#                    fin=fin,
+#                    prozess_typ=ProzessTyp.AUFBEREITUNG,  # Default für Updates
+#                    status="Daten aktualisiert",
+#                    bearbeiter="System - Email Import",
+#                    prioritaet="5",
+#                    anlieferung_datum=None,  # Optional
+#                    start_timestamp=datetime.now(),  # Setze aktuellen Zeitpunkt
+#                    ende_timestamp=None,  # Optional
+#                    sla_tage=None,  # Wird später berechnet
+#                    datenquelle=Datenquelle.EMAIL,  # Verwende Enum statt String
+ #                   notizen=f"Fahrzeugdaten aktualisiert: {', '.join(update_result['fields_updated'])}",
+ #                   zusatz_daten=None  # Optional
+  #              )
+   #             
+    #            await self.create_vehicle_process(fin, prozess_data)
             
             self.logger.info("✅ Fahrzeug erfolgreich aktualisiert", 
                             fin=fin,
@@ -415,79 +415,111 @@ class VehicleService:
             self.logger.error("❌ Fehler beim Berechnen der Fahrzeug-KPIs", error=str(e))
             return []
     
-    async def create_vehicle_process(
-        self,
-        fin: str,
-        prozess_data: FahrzeugProzessCreate
-    ) -> FahrzeugProzessResponse:
+        async def create_vehicle_process(
+            self,
+            fin: str,
+            prozess_data: FahrzeugProzessCreate
+        ) -> FahrzeugProzessResponse:
+            """
+            Erstellt einen neuen Prozess für ein bestehendes Fahrzeug.
+            Beendet automatisch alle noch offenen Prozesse des Fahrzeugs.
+            """
+            try:
+                # Validierung
+                if not self._validate_fin(fin):
+                    raise ValueError(f"Ungültige FIN: {fin}")
+                
+                # Prüfen ob Fahrzeug existiert
+                fahrzeug = await self.bigquery_service.get_fahrzeug_by_fin(fin)
+                if not fahrzeug:
+                    raise ValueError(f"Fahrzeug mit FIN {fin} nicht gefunden")
+                
+                # Alle offenen Prozesse des Fahrzeugs beenden
+                await self._close_open_processes(fin, prozess_data.prozess_typ)
+                
+                # Rest der bestehenden Logik...
+                if not prozess_data.prozess_id:
+                    prozess_data.prozess_id = self._generate_process_id(
+                        fin, 
+                        prozess_data.prozess_typ
+                    )
+                
+                # Prozess-Daten vorbereiten
+                prozess_dict = prozess_data.model_dump(exclude_none=True)
+                prozess_dict['fin'] = fin
+                
+                # SLA-Daten berechnen
+                prozess_dict = await self._calculate_sla_data(prozess_dict)
+                
+                # Bearbeiter normalisieren
+                if prozess_dict.get('bearbeiter'):
+                    prozess_dict['bearbeiter'] = self._normalize_bearbeiter_name(
+                        prozess_dict['bearbeiter']
+                    )
+                
+                # Zeitstempel setzen
+                now = datetime.now()
+                prozess_dict['start_timestamp'] = now
+                prozess_dict['erstellt_am'] = now
+                prozess_dict['aktualisiert_am'] = now
+                
+                # In BigQuery speichern
+                success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
+                
+                if not success:
+                    raise RuntimeError("Prozess konnte nicht gespeichert werden")
+                
+                # Response-Objekt erstellen
+                response = FahrzeugProzessResponse(**prozess_dict)
+                
+                self.logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
+                            fin=fin,
+                            prozess_id=response.prozess_id,
+                            prozess_typ=response.prozess_typ,
+                            sla_deadline=response.sla_deadline_datum)
+                
+                return response
+                
+            except Exception as e:
+                self.logger.error("❌ Fehler beim Erstellen des Fahrzeugprozesses", 
+                                error=str(e), 
+                                fin=fin)
+                raise
+
+    async def _close_open_processes(self, fin: str, neuer_prozess_typ: str):
         """
-        Erstellt einen neuen Prozess für ein bestehendes Fahrzeug.
+        Beendet alle offenen Prozesse eines Fahrzeugs.
         
         Args:
             fin: Fahrzeugidentifizierungsnummer
-            prozess_data: Prozessdaten
-            
-        Returns:
-            FahrzeugProzessResponse: Erstellter Prozess mit SLA-Daten
+            neuer_prozess_typ: Der neue Prozesstyp der gestartet wird
         """
         try:
-            # Validierung
-            if not self._validate_fin(fin):
-                raise ValueError(f"Ungültige FIN: {fin}")
+            # Query für offene Prozesse (ohne ende_timestamp)
+            query = f"""
+            UPDATE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+            SET 
+                ende_timestamp = CURRENT_DATETIME(),
+                status = 'BEENDET',
+                aktualisiert_am = CURRENT_DATETIME(),
+                notizen = CONCAT(IFNULL(notizen, ''), ' | Automatisch beendet durch Start von: {neuer_prozess_typ}')
+            WHERE fin = '{fin}'
+            AND ende_timestamp IS NULL
+            AND status != 'BEENDET'
+            """
             
-            # Prüfen ob Fahrzeug existiert
-            fahrzeug = await self.bigquery_service.get_fahrzeug_by_fin(fin)
-            if not fahrzeug:
-                raise ValueError(f"Fahrzeug mit FIN {fin} nicht gefunden")
+            # Direkt ausführen ohne Parameter (FIN ist bereits im Query-String)
+            result = await self.bigquery_service.execute_query(query)
             
-            # Prozess-ID generieren falls nicht vorhanden
-            if not prozess_data.prozess_id:
-                prozess_data.prozess_id = self._generate_process_id(
-                    fin, 
-                    prozess_data.prozess_typ
-                )
-            
-            # Prozess-Daten vorbereiten
-            prozess_dict = prozess_data.model_dump(exclude_none=True)
-            prozess_dict['fin'] = fin  # FIN sicherstellen
-            
-            # SLA-Daten berechnen
-            prozess_dict = await self._calculate_sla_data(prozess_dict)
-            
-            # Bearbeiter normalisieren
-            if prozess_dict.get('bearbeiter'):
-                prozess_dict['bearbeiter'] = self._normalize_bearbeiter_name(
-                    prozess_dict['bearbeiter']
-                )
-            
-            # Zeitstempel setzen
-            now = datetime.now()
-            prozess_dict['start_timestamp'] = now
-            prozess_dict['erstellt_am'] = now
-            prozess_dict['aktualisiert_am'] = now
-            
-            # In BigQuery speichern
-            success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
-            
-            if not success:
-                raise RuntimeError("Prozess konnte nicht gespeichert werden")
-            
-            # Response-Objekt erstellen
-            response = FahrzeugProzessResponse(**prozess_dict)
-            
-            self.logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
-                        fin=fin,
-                        prozess_id=response.prozess_id,
-                        prozess_typ=response.prozess_typ,
-                        sla_deadline=response.sla_deadline_datum)
-            
-            return response
+            self.logger.info("🔄 Offene Prozesse beendet", 
+                            fin=fin,
+                            neuer_prozess=neuer_prozess_typ)
             
         except Exception as e:
-            self.logger.error("❌ Fehler beim Erstellen des Fahrzeugprozesses", 
-                            error=str(e), 
+            self.logger.warning("⚠️ Fehler beim Beenden offener Prozesse", 
+                            error=str(e),
                             fin=fin)
-            raise
+            # Nicht abbrechen - neuer Prozess soll trotzdem erstellt werden
 
     async def get_vehicle_process_history(
         self, 

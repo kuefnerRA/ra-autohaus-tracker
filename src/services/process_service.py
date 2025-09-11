@@ -22,6 +22,7 @@ from src.models.integration import (
     FahrzeugStammCreate, FahrzeugProzessCreate, 
     ProzessTyp, Datenquelle
 )
+from decimal import Decimal
 
 logger = structlog.get_logger(__name__)
 
@@ -74,7 +75,32 @@ class ProcessService:
             "Hans M.": "Hans Müller",
             "Anna K.": "Anna Klein",
         }
-        
+
+        # Status-Mappings für Normalisierung
+        self.status_mappings = {
+            # WARTESCHLANGE Aliases
+            "gestartet": "WARTESCHLANGE",
+            "angelegt": "WARTESCHLANGE",
+            "wartend": "WARTESCHLANGE",
+            "neu": "WARTESCHLANGE",
+            
+            # AKTIV Aliases
+            "in bearbeitung": "AKTIV",
+            "laufend": "AKTIV",
+            "in arbeit": "AKTIV",
+            "bearbeitung": "AKTIV",
+            
+            # BEENDET Aliases
+            "beendet": "BEENDET",
+            "abgeschlossen": "BEENDET",
+            "fertig": "BEENDET",
+            "erledigt": "BEENDET",
+            
+            # Direkte Mappings
+            "warteschlange": "WARTESCHLANGE",
+            "aktiv": "AKTIV"
+        }
+
         # SLA-Definitionen in Stunden
         self.sla_hours = {
             ProzessTyp.EINKAUF: 48,      # 2 Tage
@@ -289,8 +315,10 @@ class ProcessService:
             )
         
         # Status normalisieren
-        if data.get("status") or data.get("neuer_status"):
-            normalized["status"] = data.get("status") or data.get("neuer_status")
+        status_raw = data.get("status") or data.get("neuer_status")
+        if status_raw:
+            status_key = str(status_raw).lower().strip()
+            normalized["status"] = self.status_mappings.get(status_key, status_raw.upper())
         
         # Priorität konvertieren
         if data.get("prioritaet"):
@@ -370,9 +398,40 @@ class ProcessService:
         
         if not existing_vehicle:
             logger.info("🆕 Neues Fahrzeug wird erstellt", fin=fin)
-            # Fahrzeug mit minimalen Daten erstellen
-            # (In der Praxis würden Sie hier mehr Validierung benötigen)
-            pass
+            
+            # Minimale Fahrzeugdaten aus Zapier/Email
+            from src.models.integration import (
+                FahrzeugStammCreate, 
+                Antriebsart, 
+                Bereifungsart, 
+                Besteuerungsart
+            )
+            from datetime import date
+
+            fahrzeug_data = FahrzeugStammCreate(
+                fin=fin,
+                marke=data.get("marke", "Unbekannt"),
+                modell=data.get("modell", "Unbekannt"),
+                antriebsart=Antriebsart.BENZIN,
+                farbe="Unbekannt",
+                baujahr=datetime.now().year,
+                datum_erstzulassung=date.today(),  # <- Hinzugefügt
+                kw_leistung=0,
+                km_stand=0,
+                anzahl_fahrzeugschluessel=0,
+                bereifungsart=Bereifungsart.SOMMER,
+                anzahl_vorhalter=0,
+                ek_netto=Decimal("0"),
+                besteuerungsart=Besteuerungsart.REGEL,
+                erstellt_aus_email=False,
+                datenquelle_fahrzeug=data.get("datenquelle", Datenquelle.API)
+            )
+            
+            # Fahrzeug erstellen (ohne Prozess, der kommt gleich)
+            await self.vehicle_service.create_complete_vehicle(
+                fahrzeug_data=fahrzeug_data,
+                prozess_data=None
+            )
         
         # 2. Prozess-Update verarbeiten
         process_result = await self._update_vehicle_process(data, processing_id)
