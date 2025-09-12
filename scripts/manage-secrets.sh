@@ -34,14 +34,14 @@ if [ -f .env.secrets ]; then
     echo "📋 Lade Secrets aus .env.secrets..."
     source .env.secrets
     
+    # Email Address (Username)
+    if [ ! -z "${EMAIL_ADDRESS}" ]; then
+        create_secret "email-address" "${EMAIL_ADDRESS}"
+    fi
+    
     # Email Password
     if [ ! -z "${EMAIL_PASSWORD}" ]; then
         create_secret "email-password" "${EMAIL_PASSWORD}"
-    fi
-    
-    # Zapier Webhook
-    if [ ! -z "${ZAPIER_WEBHOOK_URL}" ]; then
-        create_secret "zapier-webhook-url" "${ZAPIER_WEBHOOK_URL}"
     fi
     
     # IMAP Server
@@ -49,16 +49,16 @@ if [ -f .env.secrets ]; then
         create_secret "imap-server" "${IMAP_SERVER}"
     fi
     
-    echo "✅ Alle Secrets verarbeitet"
+    echo "✅ Alle Email-Secrets verarbeitet"
 else
     echo "⚠️  Keine .env.secrets gefunden"
     echo "   Erstelle eine .env.secrets Datei mit:"
-    echo "   EMAIL_PASSWORD=xxx"
-    echo "   ZAPIER_WEBHOOK_URL=xxx"
-    echo "   IMAP_SERVER=xxx"
+    echo "   EMAIL_ADDRESS=deine-email@domain.de"
+    echo "   EMAIL_PASSWORD=dein-passwort"
+    echo "   IMAP_SERVER=imap.gmail.com"
 fi
 
 # Liste alle Secrets
 echo ""
 echo "📋 Verfügbare Secrets:"
-gcloud secrets list --filter="labels.app=autohaus-tracker OR labels.app=NULL"
+gcloud secrets list --limit=10

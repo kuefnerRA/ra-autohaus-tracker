@@ -43,3 +43,6 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+.env.secrets
+credentials/
+.env.production

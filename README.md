@@ -317,4 +317,6 @@ ra-autohaus-tracker/
 
 ---
 
-*Letzte Aktualisierung: 08.09.2025*
+## Production
+Service URL: https://ra-autohaus-tracker-62067895551.europe-west1.run.app
+API Docs: https://ra-autohaus-tracker-62067895551.europe-west1.run.app/docs
