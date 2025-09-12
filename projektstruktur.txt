@@ -1,0 +1,199 @@
+.
+├── Dockerfile
+├── README.md
+├── README.md.old
+├── credentials
+│   └── dev-key.json
+├── docs
+│   └── architecture
+│       ├── README.md
+│       ├── data_models.md
+│       └── services.md
+├── htmlcov
+│   ├── class_index.html
+│   ├── coverage_html_cb_6fb7b396.js
+│   ├── favicon_32_cb_58284776.png
+│   ├── function_index.html
+│   ├── index.html
+│   ├── keybd_closed_cb_ce680311.png
+│   ├── status.json
+│   ├── style_cb_6b508a39.css
+│   ├── z_0618756b1ff51bca___init___py.html
+│   ├── z_0618756b1ff51bca_dependencies_py.html
+│   ├── z_145eef247bfb46b6___init___py.html
+│   ├── z_145eef247bfb46b6_main_py.html
+│   ├── z_67f6f9a13eff1831___init___py.html
+│   ├── z_67f6f9a13eff1831_bigquery_service_py.html
+│   ├── z_67f6f9a13eff1831_dashboard_service_py.html
+│   ├── z_67f6f9a13eff1831_email_service_py.html
+│   ├── z_67f6f9a13eff1831_info_service_py.html
+│   ├── z_67f6f9a13eff1831_process_service_py.html
+│   ├── z_67f6f9a13eff1831_vehicle_service_py.html
+│   ├── z_6f57f923ae69d111___init___py.html
+│   ├── z_6f57f923ae69d111_dashboard_py.html
+│   ├── z_6f57f923ae69d111_email_py.html
+│   ├── z_6f57f923ae69d111_info_py.html
+│   ├── z_6f57f923ae69d111_integration_py.html
+│   ├── z_6f57f923ae69d111_process_py.html
+│   ├── z_6f57f923ae69d111_vehicles_py.html
+│   ├── z_b1ed911f96b66699___init___py.html
+│   ├── z_b1ed911f96b66699_flowers_handler_py.html
+│   ├── z_b1ed911f96b66699_unified_handler_py.html
+│   ├── z_b1ed911f96b66699_zapier_handler_py.html
+│   ├── z_defad1a87623d8bf___init___py.html
+│   ├── z_defad1a87623d8bf_integration_py.html
+│   └── z_f0e24b7f04f99860___init___py.html
+├── projektstruktur.txt
+├── pytest.ini
+├── requirements.txt
+├── requirements.txt.backup
+├── requirements.txt.backup.old
+├── scripts
+│   ├── build-and-push.sh
+│   ├── deploy
+│   ├── deploy-all.sh
+│   ├── deploy-cloud-run.sh
+│   ├── manage-secrets.sh
+│   ├── server-control.sh
+│   ├── setup
+│   │   ├── __pycache__
+│   │   │   └── setup_bigquery.cpython-312.pyc
+│   │   ├── create_views.py
+│   │   └── setup_bigquery.py
+│   ├── setup-dev.sh
+│   ├── setup-env.sh
+│   ├── start-dev.sh
+│   ├── test
+│   │   ├── test_bigquery_intagration.sh
+│   │   ├── test_update.py
+│   │   └── verify_bigquery.py
+│   ├── test-email-credentials.py
+│   └── test_credentials.py
+├── setup.sh
+├── specs
+│   └── development_prompt.md
+├── src
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-312.pyc
+│   │   └── main.cpython-312.pyc
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   └── __init__.cpython-312.pyc
+│   │   └── routes
+│   │       ├── __init__.py
+│   │       ├── __pycache__
+│   │       │   ├── __init__.cpython-312.pyc
+│   │       │   ├── dashboard.cpython-312.pyc
+│   │       │   ├── email.cpython-312.pyc
+│   │       │   ├── info.cpython-312.pyc
+│   │       │   ├── integration.cpython-312.pyc
+│   │       │   ├── process.cpython-312.pyc
+│   │       │   └── vehicles.cpython-312.pyc
+│   │       ├── dashboard.py
+│   │       ├── email.py
+│   │       ├── info.py
+│   │       ├── integration.py
+│   │       ├── process.py
+│   │       └── vehicles.py
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   └── dependencies.cpython-312.pyc
+│   │   └── dependencies.py
+│   ├── handlers
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── flowers_handler.cpython-312.pyc
+│   │   │   ├── unified_handler.cpython-312.pyc
+│   │   │   └── zapier_handler.cpython-312.pyc
+│   │   ├── flowers_handler.py
+│   │   ├── unified_handler.py
+│   │   └── zapier_handler.py
+│   ├── main.py
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   └── integration.cpython-312.pyc
+│   │   └── integration.py
+│   └── services
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   ├── __init__.cpython-312.pyc
+│       │   ├── bigquery_service.cpython-312.pyc
+│       │   ├── dashboard_service.cpython-312.pyc
+│       │   ├── email_service.cpython-312.pyc
+│       │   ├── info_service.cpython-312.pyc
+│       │   ├── process_service.cpython-312.pyc
+│       │   └── vehicle_service.cpython-312.pyc
+│       ├── bigquery_service.py
+│       ├── dashboard_service.py
+│       ├── email_service.py
+│       ├── info_service.py
+│       ├── process_service.py
+│       └── vehicle_service.py
+├── start.sh
+├── test_setup.py
+└── tests
+    ├── __init__.py
+    ├── __pycache__
+    │   └── __init__.cpython-312.pyc
+    ├── integration
+    │   ├── __init__.py
+    │   ├── __pycache__
+    │   │   ├── __init__.cpython-312.pyc
+    │   │   ├── test_bigquery_integration.cpython-312-pytest-8.4.1.pyc
+    │   │   ├── test_email_integration.cpython-312-pytest-8.4.1.pyc
+    │   │   ├── test_integration_api.cpython-312-pytest-8.4.1.pyc
+    │   │   ├── test_process_api.cpython-312-pytest-8.4.1.pyc
+    │   │   ├── test_vehicles_api.cpython-312-pytest-8.4.1.pyc
+    │   │   └── test_zapier_integration.cpython-312-pytest-8.4.1.pyc
+    │   ├── test_bigquery_integration.py
+    │   ├── test_email_integration.py
+    │   ├── test_integration_api.py
+    │   ├── test_process_api.py
+    │   ├── test_process_api.py.backup
+    │   ├── test_vehicles_api.py
+    │   └── test_zapier_integration.py
+    ├── pytest.ini
+    ├── scrapbook1.md
+    └── unit
+        ├── __init__.py
+        ├── __pycache__
+        │   ├── __init__.cpython-312.pyc
+        │   ├── test_dashboard_routes.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_dashboard_service.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_data_models.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_email_service.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_info_routes.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_info_service.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_main.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_process_routes.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_process_service.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_process_service_extended.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_vehicle_service.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_vehicle_service_close_processes.cpython-312-pytest-8.4.1.pyc
+        │   ├── test_vehicle_service_extended.cpython-312-pytest-8.4.1.pyc
+        │   └── test_zapier_handler.cpython-312-pytest-8.4.1.pyc
+        ├── test_dashboard_routes.py
+        ├── test_dashboard_service.py
+        ├── test_data_models.py
+        ├── test_email_service.py
+        ├── test_info_routes.py
+        ├── test_info_service.py
+        ├── test_main.py
+        ├── test_main.py.old
+        ├── test_process_routes.py
+        ├── test_process_service.py
+        ├── test_process_service_extended.py
+        ├── test_vehicle_service.py
+        ├── test_vehicle_service_close_processes.py
+        ├── test_vehicle_service_extended.py
+        ├── test_vehicle_service_extended.py.old
+        └── test_zapier_handler.py
+
+31 directories, 166 files
