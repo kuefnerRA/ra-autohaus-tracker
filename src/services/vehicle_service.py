@@ -488,45 +488,59 @@ class VehicleService:
 
     async def _close_open_processes(self, fin: str, neuer_prozess_typ: str):
         """
-        Beendet alle offenen Prozesse eines Fahrzeugs mit MERGE.
-        
-        Args:
-            fin: Fahrzeugidentifizierungsnummer
-            neuer_prozess_typ: Der neue Prozesstyp der gestartet wird
+        Beendet alle offenen Prozesse eines Fahrzeugs.
+        Ignoriert Prozesse im Streaming Buffer elegant.
         """
         try:
-            # MERGE Query für offene Prozesse
-            query = f"""
-            MERGE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse` T
-            USING (
-                SELECT prozess_id
-                FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+            # Erst prüfen ob es alte Prozesse gibt (außerhalb des Buffers)
+            # DATETIME statt TIMESTAMP verwenden!
+            check_query = f"""
+            SELECT COUNT(*) as count
+            FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+            WHERE fin = '{fin}'
+            AND ende_timestamp IS NULL
+            AND status != 'BEENDET'
+            AND erstellt_am < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+            """
+            
+            result = await self.bigquery_service.execute_query(check_query)
+            rows = list(result)
+            
+            if rows and rows[0]['count'] > 0:
+                # Nur updaten wenn es alte Prozesse gibt
+                update_query = f"""
+                UPDATE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+                SET 
+                    ende_timestamp = CURRENT_DATETIME(),
+                    status = 'BEENDET',
+                    aktualisiert_am = CURRENT_DATETIME(),
+                    notizen = CONCAT(IFNULL(notizen, ''), ' | Automatisch beendet durch Start von: {neuer_prozess_typ}')
                 WHERE fin = '{fin}'
                 AND ende_timestamp IS NULL
                 AND status != 'BEENDET'
-            ) S
-            ON T.prozess_id = S.prozess_id
-            WHEN MATCHED THEN
-            UPDATE SET 
-                ende_timestamp = CURRENT_DATETIME(),
-                status = 'BEENDET',
-                aktualisiert_am = CURRENT_DATETIME(),
-                notizen = CONCAT(IFNULL(T.notizen, ''), ' | Automatisch beendet durch Start von: {neuer_prozess_typ}')
-            """
-            
-            # Query ausführen
-            result = await self.bigquery_service.execute_query(query)
-            
-            self.logger.info("🔄 Offene Prozesse beendet", 
-                            fin=fin,
-                            neuer_prozess=neuer_prozess_typ)
+                AND erstellt_am < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+                """
+                
+                await self.bigquery_service.execute_query(update_query)
+                self.logger.info("✅ Alte Prozesse beendet", 
+                                fin=fin,
+                                neuer_prozess=neuer_prozess_typ,
+                                count=rows[0]['count'])
+            else:
+                # Kein Error, nur Debug-Info
+                self.logger.debug("⏳ Keine alten Prozesse zum Beenden (alle im Streaming Buffer)", 
+                                fin=fin,
+                                neuer_prozess=neuer_prozess_typ)
             
         except Exception as e:
-            self.logger.warning("⚠️ Fehler beim Beenden offener Prozesse", 
-                            error=str(e),
-                            fin=fin)
+            # Nur unerwartete Fehler loggen
+            if "streaming buffer" not in str(e).lower():
+                self.logger.warning("⚠️ Unerwarteter Fehler beim Beenden offener Prozesse", 
+                                error=str(e),
+                                fin=fin)
             # Nicht abbrechen - neuer Prozess soll trotzdem erstellt werden
-
+            # 
+            #             
     async def get_vehicle_process_history(
         self, 
         fin: str, 

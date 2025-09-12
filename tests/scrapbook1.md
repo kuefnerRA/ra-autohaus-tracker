@@ -127,3 +127,141 @@ FIN: WBAYF8C55DD123456
 KM-Stand: 45.320
 Farbe: Alpinweiß III
 Bearbeiter: Maximilian Reinhardt
+
+
+Testreihe:
+# Fahrzeug via Zapier mit Einkauf-Prozess
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WBAYF8C55DD123456",
+    "prozess_name": "einkauf",
+    "neuer_status": "AKTIV",
+    "bearbeiter_name": "Thomas K.",
+    "prioritaet": "2",
+    "notizen": "Fahrzeug angekauft",
+    "marke": "BMW",
+    "modell": "320d"
+  }'
+
+-- In BigQuery Console
+SELECT * FROM `ra-autohaus-tracker.autohaus.fahrzeuge_stamm`;
+SELECT * FROM `ra-autohaus-tracker.autohaus.fahrzeug_prozesse`;
+
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WBAYF8C55DD123456",
+    "prozess_name": "anlieferung",
+    "neuer_status": "WARTESCHLANGE",
+    "prioritaet": "3",
+    "notizen": "Warte auf Spediteur"
+  }'
+
+  -- Sollte 2 Einträge zeigen
+SELECT 
+  prozess_id,
+  prozess_typ,
+  status,
+  start_timestamp,
+  ende_timestamp,
+  notizen
+FROM `ra-autohaus-tracker.autohaus.fahrzeug_prozesse`
+WHERE fin = 'WBAYF8C55DD123456'
+ORDER BY start_timestamp;
+
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WBAYF8C55DD123456",
+    "prozess_name": "gwa",
+    "neuer_status": "AKTIV",
+    "bearbeiter_name": "Max R.",
+    "prioritaet": "2",
+    "notizen": "Reinigung läuft"
+  }'
+
+  -- Tabellen leeren (behält Schema)
+TRUNCATE TABLE `ra-autohaus-tracker.autohaus.fahrzeug_prozesse`;
+TRUNCATE TABLE `ra-autohaus-tracker.autohaus.fahrzeug_aenderungen`;
+TRUNCATE TABLE `ra-autohaus-tracker.autohaus.fahrzeuge_stamm`;
+
+# Audi Q5 - Neues Fahrzeug mit Einkauf
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WAUZZZ8V6KA123451",
+    "prozess_name": "einkauf",
+    "neuer_status": "AKTIV",
+    "bearbeiter_name": "Max R.",
+    "prioritaet": "1",
+    "notizen": "Neuer Audi Q5 eingekauft",
+    "marke": "Audi",
+    "modell": "Q5 40 TDI"
+  }'
+#2. Prozesswechsel zu Anlieferung
+ 
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WAUZZZ8V6KA123451",
+    "prozess_name": "anlieferung",
+    "neuer_status": "WARTESCHLANGE",
+    "bearbeiter_name": "Thomas K.",
+    "prioritaet": "2",
+    "notizen": "Anlieferung für Montag geplant"
+  }'
+#3. Prozesswechsel zu Aufbereitung
+ 
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WAUZZZ8V6KA123451",
+    "prozess_name": "gwa",
+    "neuer_status": "AKTIV",
+    "bearbeiter_name": "Thomas K.",
+    "prioritaet": "3",
+    "notizen": "Vollaufbereitung inkl. Politur"
+  }'
+#4. Prozesswechsel zu Foto
+ 
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WAUZZZ8V6KA123451",
+    "prozess_name": "foto",
+    "neuer_status": "AKTIV",
+    "bearbeiter_name": "Max R.",
+    "prioritaet": "2",
+    "notizen": "360 Grad Aufnahmen"
+  }'
+#5. Prozesswechsel zu Verkauf
+ 
+curl -X POST http://localhost:8080/api/v1/integration/zapier/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fahrzeug_fin": "WAUZZZ8V6KA123451",
+    "prozess_name": "verkauf",
+    "neuer_status": "AKTIV",
+    "bearbeiter_name": "Max R.",
+    "prioritaet": "1",
+    "notizen": "Online auf mobile.de und autoscout24"
+  }'
+
+
+Prüf-Queries nach jedem Schritt:
+sql-- Alle Prozesse für dieses Fahrzeug
+SELECT 
+  prozess_typ,
+  status,
+  bearbeiter,
+  start_timestamp,
+  ende_timestamp,
+  notizen
+FROM `ra-autohaus-tracker.autohaus.fahrzeug_prozesse`
+WHERE fin = 'WAUZZZ8V6KA123456'
+ORDER BY start_timestamp DESC;
+
+-- Nur offene Prozesse
+SELECT * FROM `ra-autohaus-tracker.autohaus.v_fahrzeuge_aktuell`
+WHERE fin = 'WAUZZZ8V6KA123456';
