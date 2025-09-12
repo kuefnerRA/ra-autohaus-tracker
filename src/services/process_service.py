@@ -416,7 +416,7 @@ class ProcessService:
                 farbe="Unbekannt",
                 baujahr=datetime.now().year,
                 datum_erstzulassung=date.today(),  # <- Hinzugefügt
-                kw_leistung=0,
+                kw_leistung=1,
                 km_stand=0,
                 anzahl_fahrzeugschluessel=0,
                 bereifungsart=Bereifungsart.SOMMER,
@@ -451,15 +451,40 @@ class ProcessService:
     ) -> Dict[str, Any]:
         """Aktualisiert Fahrzeugprozess in BigQuery."""
         
-        # Hier würden Sie den VehicleService verwenden
-        # um den Prozess-Status zu aktualisieren
-        
-        logger.info("📝 Prozess-Update durchgeführt",
-                   fin=data.get("fin"),
-                   status=data.get("status"),
-                   processing_id=processing_id)
-        
-        return {"success": True, "processing_id": processing_id}
+        try:
+            # Prozess-Daten vorbereiten
+            from src.models.integration import FahrzeugProzessCreate
+            
+            prozess_data = FahrzeugProzessCreate(
+                fin=data["fin"],
+                prozess_typ=data["prozess_typ"],
+                status=data.get("status", "WARTESCHLANGE"),
+                bearbeiter=data.get("bearbeiter"),
+                prioritaet=str(data.get("prioritaet", 5)),
+                notizen=data.get("notizen", ""),
+                datenquelle=data.get("datenquelle", Datenquelle.API)
+            )
+            
+            # Prozess über VehicleService erstellen
+            created_process = await self.vehicle_service.create_vehicle_process(
+                fin=data["fin"],
+                prozess_data=prozess_data
+            )
+            
+            logger.info("📝 Prozess erfolgreich erstellt",
+                    fin=data.get("fin"),
+                    prozess_id=created_process.prozess_id,
+                    prozess_typ=created_process.prozess_typ,
+                    status=data.get("status"),
+                    processing_id=processing_id)
+            
+            return {"success": True, "processing_id": processing_id, "prozess_id": created_process.prozess_id}
+            
+        except Exception as e:
+            logger.error("❌ Fehler beim Prozess-Update",
+                        error=str(e),
+                        fin=data.get("fin"))
+            return {"success": False, "processing_id": processing_id, "error": str(e)}
     
     def _calculate_sla_data(
         self,

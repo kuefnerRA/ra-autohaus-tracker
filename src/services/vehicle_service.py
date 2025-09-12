@@ -415,100 +415,106 @@ class VehicleService:
             self.logger.error("❌ Fehler beim Berechnen der Fahrzeug-KPIs", error=str(e))
             return []
     
-        async def create_vehicle_process(
-            self,
-            fin: str,
-            prozess_data: FahrzeugProzessCreate
-        ) -> FahrzeugProzessResponse:
-            """
-            Erstellt einen neuen Prozess für ein bestehendes Fahrzeug.
-            Beendet automatisch alle noch offenen Prozesse des Fahrzeugs.
-            """
-            try:
-                # Validierung
-                if not self._validate_fin(fin):
-                    raise ValueError(f"Ungültige FIN: {fin}")
-                
-                # Prüfen ob Fahrzeug existiert
-                fahrzeug = await self.bigquery_service.get_fahrzeug_by_fin(fin)
-                if not fahrzeug:
-                    raise ValueError(f"Fahrzeug mit FIN {fin} nicht gefunden")
-                
-                # Alle offenen Prozesse des Fahrzeugs beenden
-                await self._close_open_processes(fin, prozess_data.prozess_typ)
-                
-                # Rest der bestehenden Logik...
-                if not prozess_data.prozess_id:
-                    prozess_data.prozess_id = self._generate_process_id(
-                        fin, 
-                        prozess_data.prozess_typ
-                    )
-                
-                # Prozess-Daten vorbereiten
-                prozess_dict = prozess_data.model_dump(exclude_none=True)
-                prozess_dict['fin'] = fin
-                
-                # SLA-Daten berechnen
-                prozess_dict = await self._calculate_sla_data(prozess_dict)
-                
-                # Bearbeiter normalisieren
-                if prozess_dict.get('bearbeiter'):
-                    prozess_dict['bearbeiter'] = self._normalize_bearbeiter_name(
-                        prozess_dict['bearbeiter']
-                    )
-                
-                # Zeitstempel setzen
-                now = datetime.now()
-                prozess_dict['start_timestamp'] = now
-                prozess_dict['erstellt_am'] = now
-                prozess_dict['aktualisiert_am'] = now
-                
-                # In BigQuery speichern
-                success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
-                
-                if not success:
-                    raise RuntimeError("Prozess konnte nicht gespeichert werden")
-                
-                # Response-Objekt erstellen
-                response = FahrzeugProzessResponse(**prozess_dict)
-                
-                self.logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
-                            fin=fin,
-                            prozess_id=response.prozess_id,
-                            prozess_typ=response.prozess_typ,
-                            sla_deadline=response.sla_deadline_datum)
-                
-                return response
-                
-            except Exception as e:
-                self.logger.error("❌ Fehler beim Erstellen des Fahrzeugprozesses", 
-                                error=str(e), 
-                                fin=fin)
-                raise
+    async def create_vehicle_process(
+        self,
+        fin: str,
+        prozess_data: FahrzeugProzessCreate
+    ) -> FahrzeugProzessResponse:
+        """
+        Erstellt einen neuen Prozess für ein bestehendes Fahrzeug.
+        Beendet automatisch alle noch offenen Prozesse des Fahrzeugs.
+        """
+        try:
+            # Validierung
+            if not self._validate_fin(fin):
+                raise ValueError(f"Ungültige FIN: {fin}")
+            
+            # Prüfen ob Fahrzeug existiert
+            fahrzeug = await self.bigquery_service.get_fahrzeug_by_fin(fin)
+            if not fahrzeug:
+                raise ValueError(f"Fahrzeug mit FIN {fin} nicht gefunden")
+            
+            # Alle offenen Prozesse des Fahrzeugs beenden
+            await self._close_open_processes(fin, prozess_data.prozess_typ)
+            
+            # Rest der bestehenden Logik...
+            if not prozess_data.prozess_id:
+                prozess_data.prozess_id = self._generate_process_id(
+                    fin, 
+                    prozess_data.prozess_typ
+                )
+            
+            # Prozess-Daten vorbereiten
+            prozess_dict = prozess_data.model_dump(exclude_none=True)
+            prozess_dict['fin'] = fin
+            
+            # SLA-Daten berechnen
+            prozess_dict = await self._calculate_sla_data(prozess_dict)
+            
+            # Bearbeiter normalisieren
+            if prozess_dict.get('bearbeiter'):
+                prozess_dict['bearbeiter'] = self._normalize_bearbeiter_name(
+                    prozess_dict['bearbeiter']
+                )
+            
+            # Zeitstempel setzen
+            now = datetime.now()
+            prozess_dict['start_timestamp'] = now
+            prozess_dict['erstellt_am'] = now
+            prozess_dict['aktualisiert_am'] = now
+            
+            # In BigQuery speichern
+            success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
+            
+            if not success:
+                raise RuntimeError("Prozess konnte nicht gespeichert werden")
+            
+            # Response-Objekt erstellen
+            response = FahrzeugProzessResponse(**prozess_dict)
+            
+            self.logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
+                        fin=fin,
+                        prozess_id=response.prozess_id,
+                        prozess_typ=response.prozess_typ,
+                        sla_deadline=response.sla_deadline_datum)
+            
+            return response
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Erstellen des Fahrzeugprozesses", 
+                            error=str(e), 
+                            fin=fin)
+            raise
 
     async def _close_open_processes(self, fin: str, neuer_prozess_typ: str):
         """
-        Beendet alle offenen Prozesse eines Fahrzeugs.
+        Beendet alle offenen Prozesse eines Fahrzeugs mit MERGE.
         
         Args:
             fin: Fahrzeugidentifizierungsnummer
             neuer_prozess_typ: Der neue Prozesstyp der gestartet wird
         """
         try:
-            # Query für offene Prozesse (ohne ende_timestamp)
+            # MERGE Query für offene Prozesse
             query = f"""
-            UPDATE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
-            SET 
+            MERGE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse` T
+            USING (
+                SELECT prozess_id
+                FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+                WHERE fin = '{fin}'
+                AND ende_timestamp IS NULL
+                AND status != 'BEENDET'
+            ) S
+            ON T.prozess_id = S.prozess_id
+            WHEN MATCHED THEN
+            UPDATE SET 
                 ende_timestamp = CURRENT_DATETIME(),
                 status = 'BEENDET',
                 aktualisiert_am = CURRENT_DATETIME(),
-                notizen = CONCAT(IFNULL(notizen, ''), ' | Automatisch beendet durch Start von: {neuer_prozess_typ}')
-            WHERE fin = '{fin}'
-            AND ende_timestamp IS NULL
-            AND status != 'BEENDET'
+                notizen = CONCAT(IFNULL(T.notizen, ''), ' | Automatisch beendet durch Start von: {neuer_prozess_typ}')
             """
             
-            # Direkt ausführen ohne Parameter (FIN ist bereits im Query-String)
+            # Query ausführen
             result = await self.bigquery_service.execute_query(query)
             
             self.logger.info("🔄 Offene Prozesse beendet", 
