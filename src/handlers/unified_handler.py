@@ -11,6 +11,7 @@ import uuid
 from src.services.process_service import ProcessService
 from src.services.vehicle_service import VehicleService
 from src.services.process_service import ProcessingSource
+from src.models.integration import FahrzeugStammCreate, Datenquelle
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,12 @@ class UnifiedHandler:
         "photos": "Foto",
         "sales": "Verkauf",
         "purchase": "Einkauf",
-        "delivery": "Anlieferung"
+        "delivery": "Anlieferung",
+        "(1) da fahrzeuganlage": "Einkauf",        
+        "(0) start fahrzeugaufbereitung" : "Aufbereitung",        
+        "(4.0) werkstattplanung" : "Werkstatt"
+
+
     }
     
     # Bearbeiter-Mapping
@@ -82,11 +88,18 @@ class UnifiedHandler:
     
     def _normalize_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalisiert Eingangsdaten"""
+
+        # Debug-Log am Anfang
+        logger.info(f"📊 Eingangsdaten in _normalize_data: Marke={data.get('marke')}, Modell={data.get('modell')}")
         
-        # Prozess-Typ normalisieren
+        # Prozess-Typ normalisieren (wie gehabt)
         prozess = data.get("prozess_typ", data.get("prozess", ""))
         if prozess:
-            prozess = self.PROZESS_MAPPING.get(prozess.lower(), prozess)
+            prozess_lower = prozess.lower()
+            if prozess_lower in self.PROZESS_MAPPING:
+                prozess = self.PROZESS_MAPPING[prozess_lower]
+            elif "fahrzeuganlage" in prozess_lower:
+                prozess = "Einkauf"
         else:
             prozess = ""
         
@@ -94,32 +107,99 @@ class UnifiedHandler:
         bearbeiter = data.get("bearbeiter", data.get("bearbeiter_name", ""))
         bearbeiter = self.BEARBEITER_MAPPING.get(bearbeiter, bearbeiter)
         
-        return {
+        # ALLE Daten durchreichen!
+        normalized = {
             "fin": data.get("fin", data.get("fahrzeug_fin", "")),
             "prozess_typ": prozess,
             "status": data.get("status", data.get("neuer_status", "")),
             "bearbeiter": bearbeiter,
+            # Fahrzeugstammdaten
             "marke": data.get("marke"),
-            "modell": data.get("modell")
+            "modell": data.get("modell"),
+            "antriebsart": data.get("antriebsart"),
+            "farbe": data.get("farbe"),  # FEHLTE
+            "baujahr": data.get("baujahr"),  # FEHLTE
+            "datum_erstzulassung": data.get("datum_erstzulassung"),
+            "ek_netto": data.get("ek_netto"),
+            "km_stand": data.get("km_stand"),
+            "kw_leistung": data.get("kw_leistung"),
+            "anzahl_fahrzeugschluessel": data.get("anzahl_fahrzeugschluessel"),
+            "anzahl_vorhalter": data.get("anzahl_vorhalter"),
+            "bereifungsart": data.get("bereifungsart"),
+            "besteuerungsart": data.get("besteuerungsart"),
         }
-    
+
+        # Debug-Log am Ende
+        logger.info(f"📊 Normalisierte Daten: Marke={normalized.get('marke')}, Modell={normalized.get('modell')}")
+        
+        return normalized      
+        
     async def _ensure_vehicle_exists(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-            """Stellt sicher dass Fahrzeug existiert"""
-            fin = data.get("fin")
-            if not fin:
-                return None
-                
-            # Prüfe ob Fahrzeug existiert
-            vehicle = await self.vehicle_service.get_vehicle_details(fin)
+        """Stellt sicher dass Fahrzeug existiert und aktualisiert Stammdaten"""
+        fin = data.get("fin")
+        if not fin:
+            return None
+        
+        # Debug-Log
+        logger.info(f"🚗 _ensure_vehicle_exists - Eingangsdaten: Marke={data.get('marke')}, Modell={data.get('modell')}")
+
+
+        # Prüfe ob Fahrzeug existiert
+        vehicle = await self.vehicle_service.get_vehicle_details(fin)
+        logger.info(f"🚗 Erstelle neues Fahrzeug {fin} mit Marke={data.get('marke')}, Modell={data.get('modell')}")
+        
+        # Nur "Unbekannt" setzen wenn wirklich KEINE Daten vorhanden
+        marke = data.get("marke") if data.get("marke") else "Unbekannt"
+        modell = data.get("modell") if data.get("modell") else "Unbekannt"
+        
+        logger.info(f"🚗 Finale Werte für Erstellung: Marke={marke}, Modell={modell}")
+        
+        if not vehicle:
+            # Fahrzeug existiert nicht - ERSTELLEN
+            logger.info(f"🚗 Erstelle neues Fahrzeug {fin}")
             
-            if not vehicle:
-                # Für jetzt loggen wir nur - create_complete_vehicle erwartet FahrzeugStammCreate
-                logger.info(f"🚗 Fahrzeug {fin} existiert nicht - würde erstellt werden")
-                return None
+            # FahrzeugStammCreate Objekt erstellen
+            fahrzeug_stamm = FahrzeugStammCreate(
+                fin=fin,
+                marke=data.get("marke", "Unbekannt"),
+                modell=data.get("modell", "Unbekannt"),
+                antriebsart=data.get("antriebsart"),
+                farbe=data.get("farbe"),  
+                baujahr=data.get("baujahr"),  
+                datum_erstzulassung=data.get("datum_erstzulassung"),
+                kw_leistung=data.get("kw_leistung"),
+                km_stand=data.get("km_stand"),
+                anzahl_fahrzeugschluessel=data.get("anzahl_fahrzeugschluessel"),  
+                bereifungsart=data.get("bereifungsart"),  
+                anzahl_vorhalter=data.get("anzahl_vorhalter"),  
+                ek_netto=data.get("ek_netto"),
+                besteuerungsart=data.get("besteuerungsart"),  
+                erstellt_aus_email=False,  
+                datenquelle_fahrzeug=Datenquelle.ZAPIER  
+            )
             
-            # Konvertiere zu Dict wenn FahrzeugMitProzess zurückkommt
-            if hasattr(vehicle, 'dict'):
-                return vehicle.dict()
+            # Fahrzeug erstellen
+            vehicle = await self.vehicle_service.create_complete_vehicle(fahrzeug_stamm)
+        else:
+            # Fahrzeug existiert - AKTUALISIERE nur wenn neue Daten vorhanden
+            logger.info(f"📝 Aktualisiere Fahrzeugdaten für {fin}")
+            
+            update_data = {}
+            # Nur Felder mit Werten != "Unbekannt" updaten
+            if data.get("marke") and data.get("marke") != "Unbekannt" and vehicle.marke == "Unbekannt":
+                update_data["marke"] = data.get("marke")
+            if data.get("modell") and data.get("modell") != "Unbekannt" and vehicle.modell == "Unbekannt":
+                update_data["modell"] = data.get("modell")
+            
+            if update_data:
+                await self.vehicle_service.update_vehicle(fin, update_data, create_update_process=False)
+        
+        # Korrekte Konvertierung zu Dict
+        if hasattr(vehicle, 'dict'):
+            return vehicle.dict()
+        elif hasattr(vehicle, 'model_dump'):
+            return vehicle.model_dump()
+        else:
             return {"fin": fin, "exists": True}
         
     async def _create_or_update_process(self, data: Dict[str, Any]) -> Dict[str, Any]:

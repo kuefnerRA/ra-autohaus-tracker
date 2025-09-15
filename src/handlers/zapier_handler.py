@@ -4,6 +4,7 @@ Verarbeitet Daten von Zapier und leitet sie an UnifiedHandler weiter
 """
 
 import logging
+import json
 from typing import Dict, Any
 from src.handlers.unified_handler import UnifiedHandler
 
@@ -27,7 +28,8 @@ class ZapierHandler:
             Verarbeitungsergebnis
         """
         try:
-            logger.info(f"🔗 Zapier-Webhook empfangen: {payload.get('fin', 'Unbekannt')}")
+            logger.info(f"🔗 Zapier-Webhook empfangen - VOLLSTÄNDIGER PAYLOAD:")
+            logger.info(json.dumps(payload, indent=2, ensure_ascii=False))
             
             # Zapier sendet manchmal verschachtelte Daten
             data = self._extract_zapier_data(payload)
@@ -48,21 +50,34 @@ class ZapierHandler:
     
     def _extract_zapier_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Extrahiert relevante Daten aus Zapier-Payload"""
+
+        logger.info(f"📥 Zapier Raw Payload: {json.dumps(payload, indent=2)}")
         
-        # Zapier kann Daten in verschiedenen Formaten senden
-        if "data" in payload:
-            return payload["data"]
-        
-        # Direkte Felder verwenden - angepasst an process_service.py Erwartungen
-        return {
-            "fin": payload.get("fin") or payload.get("fahrzeug_fin"),
-            "prozess_typ": payload.get("prozess_typ") or payload.get("prozess_name"),  # prozess_name wird zu prozess_typ
-            "status": payload.get("status") or payload.get("neuer_status"),
-            "bearbeiter": payload.get("bearbeiter") or payload.get("bearbeiter_name"),
-            "prioritaet": payload.get("prioritaet"),
-            "notizen": payload.get("notizen"),
-            "timestamp": payload.get("timestamp"),
-            "trigger_type": payload.get("trigger_type"),
+        # Alle Fahrzeugdaten extrahieren
+        extracted_data = {
+            # Basis
+            "fin": payload.get("fin"),
+            "prozess_typ": payload.get("prozess_typ") or payload.get("prozess_name"),
+            "status": payload.get("status"),
+            "bearbeiter": payload.get("bearbeiter"),
+            
+            # Fahrzeugstammdaten
             "marke": payload.get("marke"),
-            "modell": payload.get("modell")
+            "modell": payload.get("modell"),
+            "antriebsart": payload.get("antriebsart"),
+            "datum_erstzulassung": payload.get("datum_erstzulassung"),
+            "farbe": payload.get("farbe"),  
+            "baujahr": payload.get("baujahr"),  
+            "ek_netto": payload.get("ek_netto"),
+            "km_stand": payload.get("km_stand"),
+            "kw_leistung": payload.get("kw_leistung"),
+            "anzahl_fahrzeugschluessel": payload.get("anzahl_fahrzeugschluessel") or payload.get("anzahl_fahrzeugschlüssel"),  # Beide Varianten!
+            "anzahl_vorhalter": payload.get("anzahl_vorhalter"),
+            "bereifungsart": payload.get("bereifungsart"),
+            "besteuerungsart": payload.get("besteuerungsart"),
         }
+        
+        # Debug: Extrahierte Daten loggen
+        logger.info(f"📤 Extrahierte Daten: Marke={extracted_data.get('marke')}, Modell={extracted_data.get('modell')}")
+        
+        return extracted_data
