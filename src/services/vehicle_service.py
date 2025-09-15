@@ -6,10 +6,12 @@ Geschäftslogik für Fahrzeugverwaltung mit SLA-Berechnung und Prioritäts-Manag
 """
 
 import logging
+import json
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
 import uuid
+import asyncio
 
 import structlog
 from src.services.bigquery_service import BigQueryService
@@ -233,26 +235,7 @@ class VehicleService:
                 log_changes=True
             )
             
-            # Optional: Update-Prozess erstellen für Audit-Trail
-#            if create_update_process and update_result['changes_made']:
-#                prozess_data = FahrzeugProzessCreate(
-#                    prozess_id=self._generate_process_id(fin, "UPDATE"),
-#                    fin=fin,
-#                    prozess_typ=ProzessTyp.AUFBEREITUNG,  # Default für Updates
-#                    status="Daten aktualisiert",
-#                    bearbeiter="System - Email Import",
-#                    prioritaet="5",
-#                    anlieferung_datum=None,  # Optional
-#                    start_timestamp=datetime.now(),  # Setze aktuellen Zeitpunkt
-#                    ende_timestamp=None,  # Optional
-#                    sla_tage=None,  # Wird später berechnet
-#                    datenquelle=Datenquelle.EMAIL,  # Verwende Enum statt String
- #                   notizen=f"Fahrzeugdaten aktualisiert: {', '.join(update_result['fields_updated'])}",
- #                   zusatz_daten=None  # Optional
-  #              )
-   #             
-    #            await self.create_vehicle_process(fin, prozess_data)
-            
+          
             self.logger.info("✅ Fahrzeug erfolgreich aktualisiert", 
                             fin=fin,
                             fields_updated=update_result['fields_updated'])
@@ -667,6 +650,78 @@ class VehicleService:
                             error=str(e))
             raise
 
+   
+    async def complete_vehicle_sale(self, fin: str, verkaufsdaten: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Schließt den Verkaufsprozess und alle anderen offenen Prozesse ab.
+        Erstellt einen temporären Abschluss-Record der später aktualisiert wird.
+        
+        Args:
+            fin: Fahrzeug-FIN
+            verkaufsdaten: Optional - Verkaufsinformationen (Preis, Käufer, etc.)
+            
+        Returns:
+            True wenn erfolgreich
+        """
+        try:
+            # 1. Erstelle einen "Verkauft" Status-Eintrag
+            verkauft_prozess = {
+                'prozess_id': self._generate_process_id(fin, 'Verkauf', 'abgeschlossen'),
+                'fin': fin,
+                'prozess_typ': 'Verkauf',
+                'status': 'VERKAUFT',
+                'bearbeiter': verkaufsdaten.get('verkaufsberater') if verkaufsdaten else None,
+                'start_timestamp': datetime.now(),
+                'ende_timestamp': datetime.now(),
+                'notizen': f"Fahrzeug verkauft. VK: {verkaufsdaten.get('verkaufspreis')}€" if verkaufsdaten else "Fahrzeug verkauft",
+                'datenquelle': 'api_verkaufsabschluss',
+                'zusatz_daten': json.dumps(verkaufsdaten) if verkaufsdaten else None,
+                'erstellt_am': datetime.now(),
+                'aktualisiert_am': datetime.now()
+            }
+            
+            # Speichere Verkaufsabschluss
+            await self.bigquery_service.create_fahrzeug_prozess(verkauft_prozess)
+            
+            # 2. Markiere Fahrzeug als inaktiv
+            await self.bigquery_service.execute_query(f"""
+                UPDATE `{self.bigquery_service.dataset_ref}.fahrzeuge_stamm`
+                SET 
+                    aktiv = FALSE,
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE fin = '{fin}'
+            """)
+            
+            # 3. Erstelle einen Cleanup-Task für später
+            await self._schedule_final_cleanup(fin, datetime.now())
+            
+            self.logger.info("✅ Fahrzeug verkauft und zur Bereinigung vorgemerkt", fin=fin)
+            return True
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Verkaufsabschluss", fin=fin, error=str(e))
+            return False
+    
+    async def _schedule_final_cleanup(self, fin: str, verkaufszeitpunkt: datetime):
+        """
+        Plant die finale Bereinigung nach Ablauf der Streaming Buffer Zeit.
+        """
+        cleanup_entry = {
+            'queue_id': str(uuid.uuid4()),
+            'fin': fin,
+            'cleanup_type': 'VERKAUFSABSCHLUSS',
+            'scheduled_for': (verkaufszeitpunkt + timedelta(hours=2)).isoformat(),
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # Nutze die vorhandene Methode statt direktem SQL
+        success = await self.bigquery_service.insert_cleanup_queue(cleanup_entry)
+        
+        if not success:
+            self.logger.warning(f"⚠️ Cleanup-Task konnte nicht geplant werden für {fin}")
+
+
+
     # Private Helper Methods
     
     async def _enrich_vehicle_data(self, fahrzeug_raw: Dict[str, Any]) -> FahrzeugMitProzess:
@@ -820,3 +875,149 @@ class VehicleService:
                 'status': 'unhealthy',
                 'error': str(e)
             }
+
+class ProcessCleanupService:
+    """
+    Dedizierter Service für Prozess-Bereinigung.
+    Läuft als Background Job.
+    """
+    
+    def __init__(self, bigquery_service, vehicle_service):
+        self.bigquery = bigquery_service
+        self.vehicle_service = vehicle_service
+        self.logger = logging.getLogger(__name__)
+    
+    async def run_cleanup_cycle(self) -> Dict[str, int]:
+        """
+        Führt einen vollständigen Cleanup-Zyklus durch.
+        
+        Returns:
+            Statistiken über bereinigte Prozesse
+        """
+        stats = {
+            'prozesse_mit_nachfolger': 0,
+            'verkaufsabschluesse': 0,
+            'fehler': 0,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # 1. Beende Prozesse mit Nachfolgern
+        stats['prozesse_mit_nachfolger'] = await self._close_processes_with_successors()
+        
+        # 2. Verarbeite geplante Verkaufsabschlüsse
+        stats['verkaufsabschluesse'] = await self._process_scheduled_cleanups()
+        
+        self.logger.info(f"🧹 Cleanup-Zyklus abgeschlossen: {stats}")
+        return stats
+    
+    async def _close_processes_with_successors(self) -> int:
+        """
+        Beendet alle Prozesse die einen Nachfolger haben.
+        Setzt ende_timestamp = start_timestamp des Nachfolgers.
+        """
+        query = f"""
+        -- Finde Prozess-Ketten und berechne korrekte Ende-Zeitpunkte
+        WITH prozess_ketten AS (
+            SELECT 
+                p1.prozess_id,
+                p1.fin,
+                p1.prozess_typ as aktueller_typ,
+                p1.start_timestamp as aktueller_start,
+                MIN(p2.start_timestamp) as naechster_start
+            FROM `{self.bigquery.dataset_ref}.fahrzeug_prozesse` p1
+            INNER JOIN `{self.bigquery.dataset_ref}.fahrzeug_prozesse` p2
+                ON p1.fin = p2.fin
+                AND p2.start_timestamp > p1.start_timestamp
+            WHERE p1.ende_timestamp IS NULL
+                AND p1.status NOT IN ('BEENDET', 'VERKAUFT')
+                -- Nur Prozesse älter als 2 Stunden
+                AND p1.erstellt_am < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+            GROUP BY p1.prozess_id, p1.fin, p1.prozess_typ, p1.start_timestamp
+        )
+        
+        -- Update mit korrektem Ende-Zeitpunkt
+        UPDATE `{self.bigquery.dataset_ref}.fahrzeug_prozesse` target
+        SET 
+            ende_timestamp = kette.naechster_start,
+            status = 'BEENDET',
+            aktualisiert_am = CURRENT_DATETIME(),
+            notizen = CONCAT(IFNULL(notizen, ''), ' | Auto-Cleanup: Nachfolgeprozess gestartet')
+        FROM prozess_ketten kette
+        WHERE target.prozess_id = kette.prozess_id
+            AND target.fin = kette.fin
+        """
+        
+        try:
+            result = await self.bigquery.execute_query(query)
+            affected_rows = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else 0
+            
+            if affected_rows > 0:
+                self.logger.info(f"✅ {affected_rows} Prozesse mit Nachfolgern beendet")
+            
+            return affected_rows
+            
+        except Exception as e:
+            if "streaming buffer" not in str(e).lower():
+                self.logger.error(f"❌ Fehler beim Beenden von Prozessen: {e}")
+            return 0
+    
+    async def _process_scheduled_cleanups(self) -> int:
+        """
+        Verarbeitet geplante Bereinigungen (z.B. Verkaufsabschlüsse).
+        """
+        query = f"""
+        -- Hole fällige Cleanup-Tasks
+        SELECT * FROM `{self.bigquery.dataset_ref}.cleanup_queue`
+        WHERE scheduled_for <= CURRENT_DATETIME()
+            AND processed = FALSE
+        LIMIT 100
+        """
+        
+        try:
+            cleanups = await self.bigquery.execute_query(query)
+            count = 0
+            
+            for cleanup in cleanups:
+                if cleanup['cleanup_type'] == 'VERKAUFSABSCHLUSS':
+                    # Beende alle offenen Prozesse dieses Fahrzeugs
+                    await self._finalize_vehicle_sale(cleanup['fin'])
+                    count += 1
+                    
+                    # Markiere als verarbeitet
+                    await self.bigquery.execute_query(f"""
+                        UPDATE `{self.bigquery.dataset_ref}.cleanup_queue`
+                        SET processed = TRUE, processed_at = CURRENT_DATETIME()
+                        WHERE fin = '{cleanup['fin']}' 
+                            AND cleanup_type = 'VERKAUFSABSCHLUSS'
+                    """)
+            
+            return count
+            
+        except Exception as e:
+            self.logger.error(f"❌ Fehler bei geplanten Cleanups: {e}")
+            return 0
+    
+    async def _finalize_vehicle_sale(self, fin: str):
+        """
+        Finalisiert einen Verkauf - beendet alle offenen Prozesse.
+        """
+        query = f"""
+        UPDATE `{self.bigquery.dataset_ref}.fahrzeug_prozesse`
+        SET 
+            ende_timestamp = CASE 
+                WHEN prozess_typ = 'Verkauf' THEN ende_timestamp  -- Verkauf behält sein Ende
+                ELSE CURRENT_DATETIME()  -- Andere bekommen aktuellen Zeitpunkt
+            END,
+            status = CASE
+                WHEN status = 'VERKAUFT' THEN status  -- VERKAUFT bleibt
+                ELSE 'BEENDET'  -- Rest wird BEENDET
+            END,
+            aktualisiert_am = CURRENT_DATETIME(),
+            notizen = CONCAT(IFNULL(notizen, ''), ' | Finaler Cleanup nach Verkauf')
+        WHERE fin = '{fin}'
+            AND ende_timestamp IS NULL
+            AND erstellt_am < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+        """
+        
+        await self.bigquery.execute_query(query)
+        self.logger.info(f"✅ Verkauf finalisiert für {fin}")

@@ -52,7 +52,7 @@ def setup_bigquery():
         print("\n🔗 Verbinde zu BigQuery mit Service Account Impersonation...")
 
         service_account = os.getenv('GOOGLE_SERVICE_ACCOUNT')
-        if service_account:
+        if service_account and False:
             from google.auth import impersonated_credentials
             import google.auth
             
@@ -98,15 +98,19 @@ def setup_bigquery():
         print("\n📝 Erstelle Tabelle 'fahrzeug_aenderungen' für Change-Tracking...")
         create_fahrzeug_aenderungen_table(client, dataset_id)
 
-        # 7. Monitoring Views erstellen
+        # 7. NEU: Tabelle: cleanup_queue
+        print("\n🧹 Erstelle Tabelle 'cleanup_queue' für verzögerte Bereinigungen...")
+        create_cleanup_queue_table(client, dataset_id)
+        
+        # 8. Monitoring Views erstellen (verschiebt sich von 7 auf 8)
         print("\n📊 Erstelle Monitoring Views...")
         create_monitoring_views(client, dataset_id)
-
-        # 8. Beispieldaten einfügen
+        
+        # 9. Beispieldaten einfügen (verschiebt sich von 8 auf 9)
         print("\n📝 Füge Beispieldaten ein...")
         insert_sample_data(client, dataset_id)
         
-        # 9. Verbindung testen
+        # 10. Verbindung testen
         print("\n🧪 Teste Verbindung...")
         test_connection(client, dataset_id)
         
@@ -116,6 +120,7 @@ def setup_bigquery():
         print("   - fahrzeuge_stamm (Fahrzeugstammdaten)")
         print("   - fahrzeug_prozesse (Prozessverlauf)")
         print("   - fahrzeug_aenderungen (Änderungshistorie)")
+        print("   - cleanup_queue (Verzögerte Bereinigungen)")  
         print("   Views:")
         print("   - v_prozess_pipeline (Prozess-Pipeline)")
         print("   - v_prozesslaufzeiten (Laufzeiten-Analyse)")
@@ -253,6 +258,52 @@ def create_fahrzeug_aenderungen_table(client: bigquery.Client, dataset_id: str):
     try:
         table = client.create_table(table)
         print(f"✅ Tabelle '{table.table_id}' für Change-Tracking erstellt")
+    except Conflict:
+        print(f"ℹ️ Tabelle '{table_id}' existiert bereits")
+
+def create_cleanup_queue_table(client: bigquery.Client, dataset_id: str):
+    """Erstellt die cleanup_queue Tabelle für verzögerte Bereinigungen."""
+    
+    table_id = f"{dataset_id}.cleanup_queue"
+    
+    schema = [
+        bigquery.SchemaField("queue_id", "STRING", mode="REQUIRED", 
+                           description="Eindeutige ID des Cleanup-Tasks"),
+        bigquery.SchemaField("fin", "STRING", mode="REQUIRED",
+                           description="Fahrzeugidentifizierungsnummer"),
+        bigquery.SchemaField("cleanup_type", "STRING", mode="REQUIRED",
+                           description="Art der Bereinigung (VERKAUFSABSCHLUSS, PROZESS_TIMEOUT, etc.)"),
+        bigquery.SchemaField("scheduled_for", "DATETIME", mode="REQUIRED",
+                           description="Geplanter Zeitpunkt für die Bereinigung"),
+        bigquery.SchemaField("processed", "BOOLEAN", mode="NULLABLE", default_value_expression="FALSE",
+                           description="Wurde der Task verarbeitet"),
+        bigquery.SchemaField("processed_at", "DATETIME", mode="NULLABLE",
+                           description="Zeitpunkt der Verarbeitung"),
+        bigquery.SchemaField("error_message", "STRING", mode="NULLABLE",
+                           description="Fehlermeldung falls aufgetreten"),
+        bigquery.SchemaField("retry_count", "INTEGER", mode="NULLABLE", default_value_expression="0",
+                           description="Anzahl der Wiederholungsversuche"),
+        bigquery.SchemaField("created_at", "TIMESTAMP", mode="NULLABLE", default_value_expression="CURRENT_TIMESTAMP()",
+                           description="Erstellungszeitpunkt"),
+    ]
+    
+    table = bigquery.Table(table_id, schema=schema)
+    
+    # Partitionierung nach scheduled_for für effiziente Abfragen
+    table.time_partitioning = bigquery.TimePartitioning(
+        type_=bigquery.TimePartitioningType.DAY,
+        field="scheduled_for"
+    )
+    
+    # Clustering für optimierte Abfragen
+    table.clustering_fields = ["fin", "cleanup_type", "processed"]
+    
+    # Beschreibung
+    table.description = "Queue für verzögerte Bereinigungsaufgaben (z.B. nach Verkauf)"
+    
+    try:
+        table = client.create_table(table)
+        print(f"✅ Tabelle '{table.table_id}' für Cleanup-Queue erstellt")
     except Conflict:
         print(f"ℹ️ Tabelle '{table_id}' existiert bereits")
 
@@ -490,6 +541,32 @@ def create_monitoring_views(client: bigquery.Client, dataset_id: str):
         print(f"✅ View 'v_sla_monitoring' aktualisiert")
 
     print("✅ Alle Monitoring Views erfolgreich erstellt/aktualisiert")
+
+def insert_test_cleanup_task(client: bigquery.Client, dataset_id: str):
+    """Fügt einen Test-Cleanup-Task ein."""
+    
+    from datetime import datetime, timedelta
+    import uuid
+    
+    test_task = {
+        'queue_id': str(uuid.uuid4()),
+        'fin': 'TEST_CLEANUP_FIN_12345',
+        'cleanup_type': 'VERKAUFSABSCHLUSS',
+        'scheduled_for': (datetime.now() + timedelta(hours=2)).isoformat(),
+        'processed': False,
+        'retry_count': 0,
+        'created_at': datetime.now().isoformat()
+    }
+    
+    cleanup_table = client.get_table(f"{dataset_id}.cleanup_queue")
+    errors = client.insert_rows_json(cleanup_table, [test_task])
+    
+    if errors:
+        print(f"⚠️ Fehler beim Einfügen des Test-Cleanup-Tasks: {errors}")
+    else:
+        print(f"✅ Test-Cleanup-Task eingefügt (läuft in 2 Stunden)")
+        print(f"   FIN: {test_task['fin']}")
+        print(f"   Geplant für: {test_task['scheduled_for']}")
 
 def insert_sample_data(client: bigquery.Client, dataset_id: str):
     """Fügt Beispieldaten ein."""

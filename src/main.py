@@ -7,6 +7,8 @@ Ersetze die bestehende src/main.py mit dieser erweiterten Version.
 
 import os
 import logging
+import asyncio
+
 from dotenv import load_dotenv
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -37,6 +39,7 @@ from src.api.routes.dashboard import router as dashboard_router
 from src.api.routes.info import router as info_router
 from src.api.routes.integration import router as integration_router
 from src.api.routes.email import router as email_router
+from src.services.process_cleanup_service import ProcessCleanupJob
 
 load_dotenv()
 

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any, Union
 from decimal import Decimal
 import json
 
+
 try:
     from google.cloud import bigquery
     from google.cloud.bigquery import Client, Table
@@ -959,3 +960,31 @@ class BigQueryService:
         except Exception as e:
             logger.error(f"❌ Query-Fehler: {e}")
             return []
+        
+    async def insert_cleanup_queue(self, cleanup_entry: Dict[str, Any]) -> bool:
+        """
+        Fügt einen Eintrag in die cleanup_queue Tabelle ein.
+        """
+        try:
+            import uuid
+            cleanup_entry['queue_id'] = cleanup_entry.get('queue_id', str(uuid.uuid4()))
+            
+            # Client-Prüfung hinzufügen
+            if not self.client:
+                self.logger.error("❌ BigQuery Client nicht verfügbar")
+                return False
+                
+            table_ref = f"{self.dataset_ref}.cleanup_queue"
+            table = self.client.get_table(table_ref)
+            errors = self.client.insert_rows_json(table, [cleanup_entry])
+            
+            if errors:
+                self.logger.error(f"❌ Fehler beim Einfügen in cleanup_queue: {errors}")
+                return False
+                
+            self.logger.info(f"✅ Cleanup-Task geplant für {cleanup_entry['fin']}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Fehler bei insert_cleanup_queue: {e}")
+            return False
