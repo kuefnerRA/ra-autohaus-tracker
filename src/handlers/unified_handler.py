@@ -143,10 +143,8 @@ class UnifiedHandler:
         # Debug-Log
         logger.info(f"🚗 _ensure_vehicle_exists - Eingangsdaten: Marke={data.get('marke')}, Modell={data.get('modell')}")
 
-
         # Prüfe ob Fahrzeug existiert
         vehicle = await self.vehicle_service.get_vehicle_details(fin)
-        logger.info(f"🚗 Erstelle neues Fahrzeug {fin} mit Marke={data.get('marke')}, Modell={data.get('modell')}")
         
         # Nur "Unbekannt" setzen wenn wirklich KEINE Daten vorhanden
         marke = data.get("marke") if data.get("marke") else "Unbekannt"
@@ -158,31 +156,36 @@ class UnifiedHandler:
             # Fahrzeug existiert nicht - ERSTELLEN
             logger.info(f"🚗 Erstelle neues Fahrzeug {fin}")
             
+            # Bereite Daten vor - filtere None-Werte
+            fahrzeug_data = {
+                "fin": fin,
+                "marke": data.get("marke", "Unbekannt"),
+                "modell": data.get("modell", "Unbekannt"),
+            }
+            
+            # Füge optionale Felder nur hinzu, wenn sie vorhanden sind
+            optional_fields = [
+                "antriebsart", "farbe", "baujahr", "datum_erstzulassung",
+                "kw_leistung", "km_stand", "anzahl_fahrzeugschluessel",
+                "bereifungsart", "anzahl_vorhalter", "ek_netto", "besteuerungsart"
+            ]
+            
+            for field in optional_fields:
+                if field in data and data[field] is not None:
+                    fahrzeug_data[field] = data[field]
+            
+            # Zusätzliche Felder
+            fahrzeug_data["erstellt_aus_email"] = False
+            fahrzeug_data["datenquelle_fahrzeug"] = Datenquelle.ZAPIER
+            
             # FahrzeugStammCreate Objekt erstellen
-            fahrzeug_stamm = FahrzeugStammCreate(
-                fin=fin,
-                marke=data.get("marke", "Unbekannt"),
-                modell=data.get("modell", "Unbekannt"),
-                antriebsart=data.get("antriebsart"),
-                farbe=data.get("farbe"),  
-                baujahr=data.get("baujahr"),  
-                datum_erstzulassung=data.get("datum_erstzulassung"),
-                kw_leistung=data.get("kw_leistung"),
-                km_stand=data.get("km_stand"),
-                anzahl_fahrzeugschluessel=data.get("anzahl_fahrzeugschluessel"),  
-                bereifungsart=data.get("bereifungsart"),  
-                anzahl_vorhalter=data.get("anzahl_vorhalter"),  
-                ek_netto=data.get("ek_netto"),
-                besteuerungsart=data.get("besteuerungsart"),  
-                erstellt_aus_email=False,  
-                datenquelle_fahrzeug=Datenquelle.ZAPIER  
-            )
+            fahrzeug_stamm = FahrzeugStammCreate(**fahrzeug_data)
             
             # Fahrzeug erstellen
             vehicle = await self.vehicle_service.create_complete_vehicle(fahrzeug_stamm)
         else:
-            # Fahrzeug existiert - AKTUALISIERE nur wenn neue Daten vorhanden
-            logger.info(f"📝 Aktualisiere Fahrzeugdaten für {fin}")
+            # Bestehendes Fahrzeug - Update-Logik bleibt unverändert
+            logger.info(f"🔄 Aktualisiere Fahrzeugdaten für {fin}")
             
             update_data = {}
             # Nur Felder mit Werten != "Unbekannt" updaten
