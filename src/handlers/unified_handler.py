@@ -26,11 +26,16 @@ class UnifiedHandler:
         "sales": "Verkauf",
         "purchase": "Einkauf",
         "delivery": "Anlieferung",
-        "(1) da fahrzeuganlage": "Einkauf",        
-        "(0) start fahrzeugaufbereitung" : "Aufbereitung",        
-        "(4.0) werkstattplanung" : "Werkstatt"
-
-
+        "fahrzeuganlage": "Einkauf", 
+        "(1) da fahrzeuganlage": "Einkauf",    
+        "(0) start fahrzeugaufbereitung" : "Aufbereitung",
+        "(1) Aufbereitung in Arbeit" : "Aufbereitung",    
+        "(4.0) werkstattplanung" : "Werkstatt",
+        "aufbereitung": "Aufbereitung",  
+        "aufbereitung in arbeit": "Aufbereitung",
+        "werkstatt": "Werkstatt",  
+        "foto": "Foto",  
+        "fotoshooting": "Foto"  
     }
     
     # Bearbeiter-Mapping
@@ -44,6 +49,13 @@ class UnifiedHandler:
     def __init__(self, process_service: ProcessService, vehicle_service: VehicleService):
         self.process_service = process_service
         self.vehicle_service = vehicle_service
+        
+        # Konvertiere alle PROZESS_MAPPING Keys zu lowercase beim Init
+        self.prozess_mapping_lower = {
+            key.lower(): value 
+            for key, value in self.PROZESS_MAPPING.items()
+        }
+
         logger.info("✅ UnifiedHandler initialisiert")
 
     async def process_data(self, data: Dict[str, Any], source: str = "unknown") -> Dict[str, Any]:
@@ -96,12 +108,11 @@ class UnifiedHandler:
         prozess = data.get("prozess_typ", data.get("prozess", ""))
         if prozess:
             prozess_lower = prozess.lower()
-            if prozess_lower in self.PROZESS_MAPPING:
-                prozess = self.PROZESS_MAPPING[prozess_lower]
-            elif "fahrzeuganlage" in prozess_lower:
-                prozess = "Einkauf"
-        else:
-            prozess = ""
+            if prozess_lower in self.prozess_mapping_lower:  # RICHTIG!
+                prozess = self.prozess_mapping_lower[prozess_lower]  # RICHTIG!
+            else:
+                logger.warning(f"⚠️ Unbekannter Prozesstyp: {prozess}")
+                prozess = ""  
         
         # Bearbeiter normalisieren
         bearbeiter = data.get("bearbeiter", data.get("bearbeiter_name", ""))

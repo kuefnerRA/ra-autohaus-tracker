@@ -32,6 +32,13 @@ class ZapierHandler:
         try:
             logger.info(f"🔗 Zapier-Webhook empfangen - VOLLSTÄNDIGER PAYLOAD:")
             logger.info(json.dumps(payload, indent=2, ensure_ascii=False))
+            logger.info(f"🔍 FIN: {payload.get('fin')}")
+            logger.info(f"🔍 Prozess: {payload.get('prozess_name')} / {payload.get('prozess_typ')}")
+            logger.info(f"🔍 Status: {payload.get('status')} / {payload.get('neuer_status')}")
+            logger.info(f"🔍 Marke: {payload.get('marke')}")
+            logger.info(f"🔍 Modell: {payload.get('modell')}")
+            logger.info(f"  - EK Netto: {payload.get('ek_netto')} EUR")
+            logger.info(f"  - Bearbeiter: {payload.get('bearbeiter', 'FEHLT!')}")
             
             # Extrahiere Rohdaten
             raw_data = self._extract_zapier_data(payload)

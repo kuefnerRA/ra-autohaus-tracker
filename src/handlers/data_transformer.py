@@ -36,10 +36,13 @@ class DataTransformer:
         # WICHTIG: Status-Mapping hinzufügen
         # Zapier sendet "neuer_status", wir brauchen "status"
         if 'neuer_status' in data and data['neuer_status']:
-            transformed['status'] = data['neuer_status']
-            logger.debug(f"Mapped: neuer_status '{data['neuer_status']}' -> status")
+            # Bereinige doppelte Anführungszeichen
+            status_value = str(data['neuer_status']).strip().strip('"').strip("'")
+            transformed['status'] = status_value
+            logger.debug(f"Mapped: neuer_status '{data['neuer_status']}' -> status '{status_value}'")
         elif 'status' in data and data['status']:
-            transformed['status'] = data['status']
+            status_value = str(data['status']).strip().strip('"').strip("'") 
+            transformed['status'] = status_value
         
         # Prozess-Mapping
         # Zapier sendet "prozess_name", wir brauchen "prozess_typ"

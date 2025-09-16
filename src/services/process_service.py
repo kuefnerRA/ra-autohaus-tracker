@@ -455,14 +455,21 @@ class ProcessService:
             # Prozess-Daten vorbereiten
             from src.models.integration import FahrzeugProzessCreate
             
+            # pyright: ignore[reportCallIssue]
             prozess_data = FahrzeugProzessCreate(
+                prozess_id=None,  # Wird später generiert
                 fin=data["fin"],
                 prozess_typ=data["prozess_typ"],
                 status=data.get("status", "WARTESCHLANGE"),
                 bearbeiter=data.get("bearbeiter"),
                 prioritaet=str(data.get("prioritaet", 5)),
+                anlieferung_datum=None,  # Optional
+                start_timestamp=data.get("start_timestamp"),  # Falls vorhanden
+                ende_timestamp=None,  # Optional
+                sla_tage=None,  # Wird später berechnet
+                datenquelle=data.get("datenquelle", Datenquelle.API),
                 notizen=data.get("notizen", ""),
-                datenquelle=data.get("datenquelle", Datenquelle.API)
+                zusatz_daten=data.get("zusatz_daten", {})
             )
             
             # Prozess über VehicleService erstellen
