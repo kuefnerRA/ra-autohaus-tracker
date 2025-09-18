@@ -52,7 +52,7 @@ def setup_bigquery():
         print("\n🔗 Verbinde zu BigQuery mit Service Account Impersonation...")
 
         service_account = os.getenv('GOOGLE_SERVICE_ACCOUNT')
-        if service_account and False:
+        if service_account and False: #TODO temporär deaktiviert, muss wieder aktiviert werden
             from google.auth import impersonated_credentials
             import google.auth
             
