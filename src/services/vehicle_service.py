@@ -445,6 +445,12 @@ class VehicleService:
             prozess_dict['start_timestamp'] = now
             prozess_dict['erstellt_am'] = now
             prozess_dict['aktualisiert_am'] = now
+
+            # Wenn Status BEENDET, dann auch ende_timestamp setzen
+            if prozess_dict.get('status') == 'BEENDET':
+                prozess_dict['ende_timestamp'] = now
+                self.logger.info("Prozess wird als BEENDET angelegt - setze ende_timestamp", 
+                                prozess_id=prozess_dict['prozess_id'])
             
             # In BigQuery speichern
             success = await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)

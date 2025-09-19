@@ -8,7 +8,7 @@ Zentraler Service für alle BigQuery-Operationen mit Type-Safety und Error-Handl
 import logging
 import os
 from datetime import datetime, date
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, cast, Union
 from decimal import Decimal
 import json
 
@@ -18,6 +18,8 @@ try:
     from google.cloud.bigquery import Client, Table
     from google.api_core.exceptions import GoogleAPIError, NotFound
     from google.auth import impersonated_credentials
+    from google.auth.credentials import Credentials
+
     import google.auth
     BIGQUERY_AVAILABLE = True
 except ImportError:
@@ -122,7 +124,7 @@ class BigQueryService:
                     # Bereits der richtige Service Account - keine Impersonation nötig!
                     self.logger.info("✅ Verwende bereits impersonierte Credentials",
                         service_account=self.service_account)
-                    self.client = bigquery.Client(project=self.project_id, credentials=source_credentials)
+                    self.client = bigquery.Client(project=self.project_id, credentials=cast(Credentials, source_credentials))
                 else:
                     # Echte Impersonation nötig
                     self.logger.info("🔄 Impersonation erforderlich",
@@ -774,6 +776,122 @@ class BigQueryService:
             self.logger.error("❌ Fehler beim Abrufen des Prozesses", 
                             error=str(e))
             return None
+
+    # ===============================
+    # Dashboard-spezifische Queries
+    # ===============================
+
+    async def get_dashboard_prozess_stats(self, days_back: int = 90) -> List[Dict[str, Any]]:
+        """Holt Prozess-Statistiken für Dashboard KPIs"""
+        query = f"""
+        SELECT 
+            COUNT(DISTINCT fin) as fahrzeuge_gesamt,
+            COUNT(DISTINCT CASE WHEN status != 'abgeschlossen' THEN fin END) as fahrzeuge_aktiv,
+            COUNT(DISTINCT CASE WHEN prozess_typ = 'Aufbereitung' AND status != 'abgeschlossen' THEN fin END) as in_aufbereitung,
+            COUNT(DISTINCT CASE WHEN prozess_typ = 'Werkstatt' AND status != 'abgeschlossen' THEN fin END) as in_werkstatt,
+            COUNT(DISTINCT CASE WHEN prozess_typ = 'Foto' AND status != 'abgeschlossen' THEN fin END) as in_foto,
+            COUNT(DISTINCT CASE WHEN prozess_typ = 'Verkauf' AND status = 'verfügbar' THEN fin END) as verkaufsbereit
+        FROM `{self.dataset_ref}.fahrzeug_prozesse`
+        WHERE DATE(erstellt_am) >= DATE_SUB(CURRENT_DATE(), INTERVAL {days_back} DAY)
+        """
+        return await self.execute_query(query)
+
+    async def get_dashboard_sla_stats(self) -> List[Dict[str, Any]]:
+        """Holt SLA-Statistiken für Dashboard"""
+        query = f"""
+        SELECT
+            COUNT(CASE WHEN tage_bis_sla_deadline < 0 THEN 1 END) as sla_ueberfaellig,
+            COUNT(CASE WHEN tage_bis_sla_deadline BETWEEN 0 AND 1 THEN 1 END) as sla_kritisch,
+            COUNT(CASE WHEN tage_bis_sla_deadline BETWEEN 2 AND 3 THEN 1 END) as sla_warnung,
+            AVG(dauer_minuten) / 60 as avg_prozessdauer_stunden
+        FROM `{self.dataset_ref}.fahrzeug_prozesse`
+        WHERE status != 'abgeschlossen' 
+        AND ende_timestamp IS NULL
+        """
+        return await self.execute_query(query)
+
+    async def get_dashboard_durchlaufzeiten(self) -> List[Dict[str, Any]]:
+        """Holt Durchlaufzeiten-Statistiken"""
+        query = f"""
+        SELECT 
+            prozess_typ,
+            AVG(DATETIME_DIFF(ende_timestamp, start_timestamp, HOUR)) as avg_dauer_stunden,
+            MIN(DATETIME_DIFF(ende_timestamp, start_timestamp, HOUR)) as min_dauer_stunden,
+            MAX(DATETIME_DIFF(ende_timestamp, start_timestamp, HOUR)) as max_dauer_stunden
+        FROM `{self.dataset_ref}.fahrzeug_prozesse`
+        WHERE ende_timestamp IS NOT NULL
+        AND start_timestamp IS NOT NULL
+        GROUP BY prozess_typ
+        """
+        return await self.execute_query(query)
+
+    async def get_warteschlangen_detail(self) -> List[Dict[str, Any]]:
+        """Holt detaillierte Warteschlangen-Informationen"""
+        query = f"""
+        SELECT 
+            p.prozess_typ,
+            p.fin,
+            p.status,
+            p.bearbeiter,
+            p.prioritaet,
+            p.start_timestamp,
+            p.sla_deadline_datum,
+            p.tage_bis_sla_deadline,
+            f.marke,
+            f.modell,
+            f.baujahr,
+            DATETIME_DIFF(CURRENT_DATETIME(), p.start_timestamp, HOUR) as wartend_seit_stunden
+        FROM `{self.dataset_ref}.fahrzeug_prozesse` p
+        LEFT JOIN `{self.dataset_ref}.fahrzeuge_stamm` f ON p.fin = f.fin
+        WHERE p.status IN ('wartend', 'in_bearbeitung', 'pausiert')
+        AND p.ende_timestamp IS NULL
+        ORDER BY p.prioritaet ASC, p.start_timestamp ASC
+        """
+        return await self.execute_query(query)
+
+    async def get_sla_critical_vehicles(self) -> List[Dict[str, Any]]:
+        """Holt SLA-kritische Fahrzeuge"""
+        query = f"""
+        SELECT 
+            p.fin,
+            p.prozess_typ,
+            p.status,
+            p.bearbeiter,
+            p.sla_deadline_datum,
+            p.tage_bis_sla_deadline,
+            f.marke,
+            f.modell,
+            f.ek_netto,
+            CASE 
+                WHEN p.tage_bis_sla_deadline < 0 THEN 'überfällig'
+                WHEN p.tage_bis_sla_deadline <= 1 THEN 'kritisch'
+                WHEN p.tage_bis_sla_deadline <= 3 THEN 'warnung'
+                ELSE 'ok'
+            END as sla_kategorie
+        FROM `{self.dataset_ref}.fahrzeug_prozesse` p
+        LEFT JOIN `{self.dataset_ref}.fahrzeuge_stamm` f ON p.fin = f.fin
+        WHERE p.ende_timestamp IS NULL
+        ORDER BY p.tage_bis_sla_deadline ASC
+        """
+        return await self.execute_query(query)
+
+    async def get_bearbeiter_workload_stats(self) -> List[Dict[str, Any]]:
+        """Holt Bearbeiter-Workload Statistiken"""
+        query = f"""
+        SELECT 
+            bearbeiter,
+            COUNT(DISTINCT fin) as fahrzeuge_anzahl,
+            COUNT(DISTINCT prozess_id) as prozesse_anzahl,
+            AVG(DATETIME_DIFF(CURRENT_DATETIME(), start_timestamp, HOUR)) as avg_alter_stunden,
+            MIN(tage_bis_sla_deadline) as kritischster_sla,
+            STRING_AGG(DISTINCT prozess_typ) as prozess_typen
+        FROM `{self.dataset_ref}.fahrzeug_prozesse`
+        WHERE ende_timestamp IS NULL
+        AND bearbeiter IS NOT NULL
+        GROUP BY bearbeiter
+        ORDER BY fahrzeuge_anzahl DESC
+        """
+        return await self.execute_query(query)
 
     # Helper Methods
     def _prepare_fahrzeug_row(self, fahrzeug_data: Dict[str, Any]) -> Dict[str, Any]:

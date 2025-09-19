@@ -1,18 +1,18 @@
 # src/services/dashboard_service.py
 """
 Dashboard Service für KPIs, Statistiken und Analytics
-Verantwortlich für alle Dashboard-bezogenen Daten und Metriken
+Orchestriert Dashboard-Daten über BigQueryService
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from src.services.bigquery_service import BigQueryService
 
 logger = logging.getLogger(__name__)
 
 class DashboardService:
-    """Service für Dashboard-KPIs und Analytics"""
+    """Service für Dashboard-KPIs und Analytics - orchestriert BigQuery-Abfragen"""
     
     def __init__(self, bigquery_service: BigQueryService):
         self.bq = bigquery_service
@@ -26,50 +26,12 @@ class DashboardService:
             Dict mit wichtigsten KPIs
         """
         try:
-            # Aktuelle Prozesse zählen
-            aktive_prozesse_query = """
-            SELECT 
-                COUNT(DISTINCT fin) as fahrzeuge_gesamt,
-                COUNT(DISTINCT CASE WHEN status != 'abgeschlossen' THEN fin END) as fahrzeuge_aktiv,
-                COUNT(DISTINCT CASE WHEN prozess_typ = 'Aufbereitung' AND status != 'abgeschlossen' THEN fin END) as in_aufbereitung,
-                COUNT(DISTINCT CASE WHEN prozess_typ = 'Werkstatt' AND status != 'abgeschlossen' THEN fin END) as in_werkstatt,
-                COUNT(DISTINCT CASE WHEN prozess_typ = 'Foto' AND status != 'abgeschlossen' THEN fin END) as in_foto,
-                COUNT(DISTINCT CASE WHEN prozess_typ = 'Verkauf' AND status = 'verfügbar' THEN fin END) as verkaufsbereit
-            FROM fahrzeug_prozesse
-            WHERE DATE(erstellt_am) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
-            """
+            # Delegiere an BigQueryService
+            prozess_stats = await self.bq.get_dashboard_prozess_stats()
+            sla_stats = await self.bq.get_dashboard_sla_stats()
+            durchlauf_stats = await self.bq.get_dashboard_durchlaufzeiten()
             
-            # SLA-Status
-            sla_query = """
-            SELECT
-                COUNT(CASE WHEN tage_bis_sla_deadline < 0 THEN 1 END) as sla_ueberfaellig,
-                COUNT(CASE WHEN tage_bis_sla_deadline BETWEEN 0 AND 1 THEN 1 END) as sla_kritisch,
-                COUNT(CASE WHEN tage_bis_sla_deadline BETWEEN 2 AND 3 THEN 1 END) as sla_warnung,
-                AVG(dauer_minuten) / 60 as avg_prozessdauer_stunden
-            FROM fahrzeug_prozesse
-            WHERE status != 'abgeschlossen' 
-            AND ende_timestamp IS NULL
-            """
-            
-            # Durchlaufzeiten
-            durchlauf_query = """
-            SELECT 
-                prozess_typ,
-                AVG(DATETIME_DIFF(ende_timestamp, start_timestamp, HOUR)) as avg_dauer_stunden,
-                MIN(DATETIME_DIFF(ende_timestamp, start_timestamp, HOUR)) as min_dauer_stunden,
-                MAX(DATETIME_DIFF(ende_timestamp, start_timestamp, HOUR)) as max_dauer_stunden
-            FROM fahrzeug_prozesse
-            WHERE ende_timestamp IS NOT NULL
-            AND start_timestamp IS NOT NULL
-            GROUP BY prozess_typ
-            """
-            
-            # Queries ausführen
-            prozess_stats = await self.bq.execute_query(aktive_prozesse_query)
-            sla_stats = await self.bq.execute_query(sla_query)
-            durchlauf_stats = await self.bq.execute_query(durchlauf_query)
-            
-            # KPIs zusammenstellen
+            # Daten aufbereiten und strukturieren
             kpis = {
                 "timestamp": datetime.now().isoformat(),
                 "fahrzeuge": {
@@ -96,7 +58,6 @@ class DashboardService:
             
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen der KPIs: {e}")
-            # Fallback mit Mock-Daten
             return self._get_mock_kpis()
     
     async def get_warteschlangen(self) -> Dict[str, List[Dict]]:
@@ -107,30 +68,10 @@ class DashboardService:
             Dict mit Warteschlangen pro Prozess
         """
         try:
-            query = """
-            SELECT 
-                p.prozess_typ,
-                p.fin,
-                p.status,
-                p.bearbeiter,
-                p.prioritaet,
-                p.start_timestamp,
-                p.sla_deadline_datum,
-                p.tage_bis_sla_deadline,
-                f.marke,
-                f.modell,
-                f.baujahr,
-                DATETIME_DIFF(CURRENT_DATETIME(), p.start_timestamp, HOUR) as wartend_seit_stunden
-            FROM fahrzeug_prozesse p
-            LEFT JOIN fahrzeuge_stamm f ON p.fin = f.fin
-            WHERE p.status IN ('wartend', 'in_bearbeitung', 'pausiert')
-            AND p.ende_timestamp IS NULL
-            ORDER BY p.prioritaet ASC, p.start_timestamp ASC
-            """
+            # Rohdaten von BigQueryService holen
+            results = await self.bq.get_warteschlangen_detail()
             
-            results = await self.bq.execute_query(query)
-            
-            # Nach Prozesstyp gruppieren
+            # Nach Prozesstyp gruppieren und formatieren
             warteschlangen = {
                 "Einkauf": [],
                 "Anlieferung": [],
@@ -168,32 +109,10 @@ class DashboardService:
             Dict mit SLA-Statistiken
         """
         try:
-            query = """
-            SELECT 
-                p.fin,
-                p.prozess_typ,
-                p.status,
-                p.bearbeiter,
-                p.sla_deadline_datum,
-                p.tage_bis_sla_deadline,
-                f.marke,
-                f.modell,
-                f.ek_netto,
-                CASE 
-                    WHEN p.tage_bis_sla_deadline < 0 THEN 'überfällig'
-                    WHEN p.tage_bis_sla_deadline <= 1 THEN 'kritisch'
-                    WHEN p.tage_bis_sla_deadline <= 3 THEN 'warnung'
-                    ELSE 'ok'
-                END as sla_kategorie
-            FROM fahrzeug_prozesse p
-            LEFT JOIN fahrzeuge_stamm f ON p.fin = f.fin
-            WHERE p.ende_timestamp IS NULL
-            ORDER BY p.tage_bis_sla_deadline ASC
-            """
+            # Rohdaten von BigQueryService
+            results = await self.bq.get_sla_critical_vehicles()
             
-            results = await self.bq.execute_query(query)
-            
-            # Kategorisieren
+            # Kategorisieren und aufbereiten
             sla_overview = {
                 "überfällig": [],
                 "kritisch": [],
@@ -236,23 +155,10 @@ class DashboardService:
             Liste mit Bearbeiter-Statistiken
         """
         try:
-            query = """
-            SELECT 
-                bearbeiter,
-                COUNT(DISTINCT fin) as fahrzeuge_anzahl,
-                COUNT(DISTINCT prozess_id) as prozesse_anzahl,
-                AVG(DATETIME_DIFF(CURRENT_DATETIME(), start_timestamp, HOUR)) as avg_alter_stunden,
-                MIN(tage_bis_sla_deadline) as kritischster_sla,
-                STRING_AGG(DISTINCT prozess_typ) as prozess_typen
-            FROM fahrzeug_prozesse
-            WHERE ende_timestamp IS NULL
-            AND bearbeiter IS NOT NULL
-            GROUP BY bearbeiter
-            ORDER BY fahrzeuge_anzahl DESC
-            """
+            # Rohdaten von BigQueryService
+            results = await self.bq.get_bearbeiter_workload_stats()
             
-            results = await self.bq.execute_query(query)
-            
+            # Aufbereiten und Auslastung berechnen
             workload = []
             for row in results:
                 workload.append({
@@ -261,7 +167,7 @@ class DashboardService:
                     "prozesse": row.get("prozesse_anzahl", 0),
                     "avg_alter_stunden": round(row.get("avg_alter_stunden", 0), 1),
                     "kritischster_sla_tage": row.get("kritischster_sla"),
-                    "prozess_typen": row.get("prozess_typen", "").split(","),
+                    "prozess_typen": row.get("prozess_typen", "").split(",") if row.get("prozess_typen") else [],
                     "auslastung": self._calculate_auslastung(row.get("prozesse_anzahl", 0))
                 })
             
@@ -271,6 +177,9 @@ class DashboardService:
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen der Bearbeiter-Workload: {e}")
             return self._get_mock_workload()
+    
+    # Hilfsfunktionen bleiben unverändert
+    # ... rest of the helper methods ...
     
     # Hilfsfunktionen
     def _format_durchlaufzeiten(self, stats: List[Dict]) -> Dict[str, Dict]:

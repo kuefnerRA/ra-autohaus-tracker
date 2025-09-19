@@ -457,7 +457,7 @@ class ProcessService:
             
             # pyright: ignore[reportCallIssue]
             prozess_data = FahrzeugProzessCreate(
-                prozess_id=None,  # Wird später generiert
+                prozess_id=data.get("prozess_id"),  # Externe ID durchreichen!
                 fin=data["fin"],
                 prozess_typ=data["prozess_typ"],
                 status=data.get("status", "WARTESCHLANGE"),

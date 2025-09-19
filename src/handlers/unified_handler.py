@@ -26,6 +26,7 @@ class UnifiedHandler:
         "sales": "Verkauf",
         "purchase": "Einkauf",
         "delivery": "Anlieferung",
+        "anlieferung": "Anlieferung",
         "fahrzeuganlage": "Einkauf", 
         "(1) da fahrzeuganlage": "Einkauf",    
         "(0) start fahrzeugaufbereitung" : "Aufbereitung",

@@ -142,9 +142,9 @@ class FahrzeugProzessCreate(BaseModel):
     @field_validator('ende_timestamp')
     @classmethod
     def validate_timestamps(cls, v, info: ValidationInfo):
-        """Validiert dass Ende-Zeit nach Start-Zeit liegt."""
+        """Validiert dass Ende-Zeit nach oder gleich mit Start-Zeit ist."""
         if v and info.data.get('start_timestamp'):
-            if v <= info.data['start_timestamp']:
+            if v < info.data['start_timestamp']:
                 raise ValueError('Ende-Zeit muss nach Start-Zeit liegen')
         return v
 
