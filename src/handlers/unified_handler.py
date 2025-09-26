@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import uuid
 
+from src.core.mappings import CentralMappings
 from src.services.process_service import ProcessService
 from src.services.vehicle_service import VehicleService
 from src.services.process_service import ProcessingSource
@@ -18,60 +19,20 @@ logger = logging.getLogger(__name__)
 class UnifiedHandler:
     """Zentrale Datenverarbeitung für alle Quellen"""
     
-    # Prozess-Mapping für verschiedene Schreibweisen
-    PROZESS_MAPPING = {
-        "gwa": "Aufbereitung",
-        "garage": "Werkstatt",
-        "photos": "Foto",
-        "sales": "Verkauf",
-        "purchase": "Einkauf",
-        "delivery": "Anlieferung",
-        "anlieferung": "Anlieferung",
-        "fahrzeuganlage": "Einkauf", 
-        "(1) da fahrzeuganlage": "Einkauf",    
-        "(0) start fahrzeugaufbereitung" : "Aufbereitung",
-        "(1) Aufbereitung in Arbeit" : "Aufbereitung",    
-        "(4.0) werkstattplanung" : "Werkstatt",
-        "aufbereitung": "Aufbereitung",  
-        "aufbereitung in arbeit": "Aufbereitung",
-        "werkstatt": "Werkstatt",  
-        "foto": "Foto",  
-        "fotoshooting": "Foto"  
-    }
-    
-    # Bearbeiter-Mapping
-    BEARBEITER_MAPPING = {
-        "Thomas K.": "Thomas Küfner",
-        "Max R.": "Maximilian Reinhardt",
-        "Thomas": "Thomas Küfner",
-        "Max": "Maximilian Reinhardt"
-    }
-    
     def __init__(self, process_service: ProcessService, vehicle_service: VehicleService):
         self.process_service = process_service
         self.vehicle_service = vehicle_service
+        self.logger = logger  # Wichtig für Pylance
+        self.mappings = CentralMappings  # Verwende zentrale Mappings
         
-        # Konvertiere alle PROZESS_MAPPING Keys zu lowercase beim Init
-        self.prozess_mapping_lower = {
-            key.lower(): value 
-            for key, value in self.PROZESS_MAPPING.items()
-        }
-
-        logger.info("✅ UnifiedHandler initialisiert")
+        logger.info("✅ UnifiedHandler initialisiert mit zentralen Mappings")
 
     async def process_data(self, data: Dict[str, Any], source: str = "unknown") -> Dict[str, Any]:
         """
         Verarbeitet Daten aus beliebiger Quelle einheitlich
-        
-        Args:
-            data: Eingangsdaten
-            source: Quelle (zapier, email, direct)
-            
-        Returns:
-            Verarbeitungsergebnis
         """
         try:
-            logger.info(f"📥 Verarbeite Daten von {source}: {data.get('fin', 'Unbekannt')}")
+            self.logger.info(f"🔥 Verarbeite Daten von {source}: {data.get('fin', 'Unbekannt')}")
             
             # Normalisiere Daten
             normalized = self._normalize_data(data)
@@ -92,7 +53,7 @@ class UnifiedHandler:
             }
             
         except Exception as e:
-            logger.error(f"❌ Fehler bei Datenverarbeitung: {e}")
+            self.logger.error(f"❌ Fehler bei Datenverarbeitung: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -100,37 +61,35 @@ class UnifiedHandler:
             }
     
     def _normalize_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalisiert Eingangsdaten"""
-
+        """Normalisiert Eingangsdaten mit zentralen Mappings"""
+        
         # Debug-Log am Anfang
-        logger.info(f"📊 Eingangsdaten in _normalize_data: Marke={data.get('marke')}, Modell={data.get('modell')}")
+        self.logger.info(f"📊 Eingangsdaten: Marke={data.get('marke')}, Modell={data.get('modell')}")
         
-        # Prozess-Typ normalisieren (wie gehabt)
-        prozess = data.get("prozess_typ", data.get("prozess", ""))
-        if prozess:
-            prozess_lower = prozess.lower()
-            if prozess_lower in self.prozess_mapping_lower:  # RICHTIG!
-                prozess = self.prozess_mapping_lower[prozess_lower]  # RICHTIG!
-            else:
-                logger.warning(f"⚠️ Unbekannter Prozesstyp: {prozess}")
-                prozess = ""  
+        # Prozess-Typ mit zentralen Mappings normalisieren
+        prozess_raw = data.get("prozess_typ", data.get("prozess", ""))
+        prozess = self.mappings.normalize_prozess_typ(prozess_raw) if prozess_raw else ""
         
-        # Bearbeiter normalisieren
-        bearbeiter = data.get("bearbeiter", data.get("bearbeiter_name", ""))
-        bearbeiter = self.BEARBEITER_MAPPING.get(bearbeiter, bearbeiter)
+        # Bearbeiter mit zentralen Mappings normalisieren
+        bearbeiter_raw = data.get("bearbeiter", data.get("bearbeiter_name", ""))
+        bearbeiter = self.mappings.normalize_bearbeiter(bearbeiter_raw)
         
-        # ALLE Daten durchreichen!
+        # Status mit zentralen Mappings normalisieren
+        status_raw = data.get("status", data.get("neuer_status", ""))
+        status = self.mappings.normalize_status(status_raw) if status_raw else ""
+        
+        # ALLE Daten durchreichen
         normalized = {
             "fin": data.get("fin", data.get("fahrzeug_fin", "")),
             "prozess_typ": prozess,
-            "status": data.get("status", data.get("neuer_status", "")),
+            "status": status,
             "bearbeiter": bearbeiter,
             # Fahrzeugstammdaten
             "marke": data.get("marke"),
             "modell": data.get("modell"),
             "antriebsart": data.get("antriebsart"),
-            "farbe": data.get("farbe"),  # FEHLTE
-            "baujahr": data.get("baujahr"),  # FEHLTE
+            "farbe": data.get("farbe"),
+            "baujahr": data.get("baujahr"),
             "datum_erstzulassung": data.get("datum_erstzulassung"),
             "ek_netto": data.get("ek_netto"),
             "km_stand": data.get("km_stand"),
@@ -142,9 +101,9 @@ class UnifiedHandler:
         }
 
         # Debug-Log am Ende
-        logger.info(f"📊 Normalisierte Daten: Marke={normalized.get('marke')}, Modell={normalized.get('modell')}")
+        self.logger.info(f"📊 Normalisierte Daten: Marke={normalized.get('marke')}, Modell={normalized.get('modell')}")
         
-        return normalized      
+        return normalized   
         
     async def _ensure_vehicle_exists(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Stellt sicher dass Fahrzeug existiert und aktualisiert Stammdaten"""

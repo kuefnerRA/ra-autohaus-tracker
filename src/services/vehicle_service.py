@@ -478,58 +478,141 @@ class VehicleService:
     async def _close_open_processes(self, fin: str, neuer_prozess_typ: str):
         """
         Beendet alle offenen Prozesse eines Fahrzeugs.
-        Ignoriert Prozesse im Streaming Buffer elegant.
+        Strategie:
+        1. Versuche direkt zu beenden wenn alt genug
+        2. Bei jungen Prozessen oder Fehler → in cleanup_queue einplanen
         """
         try:
-            # Erst prüfen ob es alte Prozesse gibt (außerhalb des Buffers)
-            # DATETIME statt TIMESTAMP verwenden!
-            check_query = f"""
-            SELECT COUNT(*) as count
+            # Alle offenen Prozesse des Fahrzeugs finden
+            find_query = f"""
+            SELECT 
+                prozess_id, 
+                prozess_typ, 
+                start_timestamp, 
+                erstellt_am,
+                DATETIME_DIFF(CURRENT_DATETIME(), erstellt_am, MINUTE) as age_minutes
             FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
             WHERE fin = '{fin}'
             AND ende_timestamp IS NULL
-            AND status != 'BEENDET'
-            AND erstellt_am < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
+            AND status NOT IN ('BEENDET', 'VERKAUFT')
             """
             
-            result = await self.bigquery_service.execute_query(check_query)
-            rows = list(result)
+            open_processes = await self.bigquery_service.execute_query(find_query)
             
-            if rows and rows[0]['count'] > 0:
-                # Nur updaten wenn es alte Prozesse gibt
-                update_query = f"""
-                UPDATE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
-                SET 
-                    ende_timestamp = CURRENT_DATETIME(),
-                    status = 'BEENDET',
-                    aktualisiert_am = CURRENT_DATETIME(),
-                    notizen = CONCAT(IFNULL(notizen, ''), ' | Automatisch beendet durch Start von: {neuer_prozess_typ}')
-                WHERE fin = '{fin}'
-                AND ende_timestamp IS NULL
-                AND status != 'BEENDET'
-                AND erstellt_am < DATETIME_SUB(CURRENT_DATETIME(), INTERVAL 2 HOUR)
-                """
+            if not open_processes:
+                self.logger.debug("Keine offenen Prozesse zum Beenden gefunden", fin=fin)
+                return
+            
+            for process in open_processes:
+                prozess_id = process.get('prozess_id')
+                # Null-Check für prozess_id
+                if not prozess_id:
+                    self.logger.warning("Prozess ohne ID gefunden, überspringe", 
+                                    fin=fin, process=process)
+                    continue
+                    
+                age_minutes = process.get('age_minutes', 0)
                 
-                await self.bigquery_service.execute_query(update_query)
-                self.logger.info("✅ Alte Prozesse beendet", 
-                                fin=fin,
-                                neuer_prozess=neuer_prozess_typ,
-                                count=rows[0]['count'])
-            else:
-                # Kein Error, nur Debug-Info
-                self.logger.debug("⏳ Keine alten Prozesse zum Beenden (alle im Streaming Buffer)", 
-                                fin=fin,
-                                neuer_prozess=neuer_prozess_typ)
-            
+                if age_minutes >= 120:  # 2 Stunden alt - UPDATE sollte funktionieren
+                    # Versuche direktes UPDATE
+                    update_query = f"""
+                    UPDATE `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+                    SET 
+                        ende_timestamp = CURRENT_DATETIME(),
+                        status = 'BEENDET',
+                        aktualisiert_am = CURRENT_DATETIME(),
+                        notizen = CONCAT(IFNULL(notizen, ''), ' | Auto-beendet: Start von {neuer_prozess_typ}')
+                    WHERE prozess_id = '{prozess_id}'
+                    AND fin = '{fin}'
+                    AND ende_timestamp IS NULL
+                    """
+                    
+                    try:
+                        result = await self.bigquery_service.execute_query(update_query)
+                        self.logger.info("✅ Prozess direkt beendet", 
+                                    prozess_id=prozess_id,
+                                    age_minutes=age_minutes)
+                    except Exception as e:
+                        if "streaming buffer" in str(e).lower():
+                            # Streaming Buffer Problem - in Queue
+                            self.logger.info("⏱️ Streaming Buffer - plane Cleanup", 
+                                        prozess_id=prozess_id)
+                            await self._schedule_process_cleanup(fin, prozess_id)
+                        else:
+                            # Anderer Fehler
+                            self.logger.error("❌ UPDATE fehlgeschlagen", 
+                                            prozess_id=prozess_id, 
+                                            error=str(e))
+                else:
+                    # Prozess zu jung - direkt in Queue
+                    wait_minutes = 125 - age_minutes  # 5 Minuten Puffer
+                    scheduled_time = datetime.now() + timedelta(minutes=wait_minutes)
+                    
+                    self.logger.info("⏱️ Prozess zu jung - plane Cleanup", 
+                                prozess_id=prozess_id,
+                                age_minutes=age_minutes,
+                                wait_minutes=wait_minutes)
+                    
+                    await self._schedule_process_cleanup(
+                        fin, 
+                        prozess_id,
+                        scheduled_for=scheduled_time
+                    )
+                    
         except Exception as e:
-            # Nur unerwartete Fehler loggen
-            if "streaming buffer" not in str(e).lower():
-                self.logger.warning("⚠️ Unerwarteter Fehler beim Beenden offener Prozesse", 
-                                error=str(e),
-                                fin=fin)
+            self.logger.warning("⚠️ Fehler beim Prozess-Cleanup", 
+                            error=str(e), fin=fin)
             # Nicht abbrechen - neuer Prozess soll trotzdem erstellt werden
-            # 
-            #             
+
+    async def _schedule_process_cleanup(
+        self, 
+        fin: str, 
+        prozess_id: str,
+        scheduled_for: Optional[datetime] = None
+    ):
+        """
+        Plant einen Prozess-Cleanup in der Queue.
+        
+        Args:
+            fin: Fahrzeug-FIN
+            prozess_id: ID des zu beendenden Prozesses
+            scheduled_for: Wann soll der Cleanup laufen (default: in 125 Minuten)
+        """
+        try:
+            import uuid
+            
+            if not scheduled_for:
+                scheduled_for = datetime.now() + timedelta(minutes=125)
+            
+            cleanup_entry = {
+                'queue_id': str(uuid.uuid4()),
+                'fin': fin,
+                'prozess_id': prozess_id,  # NEU: Direkt als Feld
+                'cleanup_type': 'PROZESS_WECHSEL',
+                'scheduled_for': scheduled_for.isoformat(),
+                'processed': False,
+                'created_at': datetime.now().isoformat(),
+                'zusatz_daten': json.dumps({
+                    'reason': 'Prozesswechsel - alter Prozess beenden',
+                    'scheduled_at': datetime.now().isoformat()
+                })
+            }
+            
+            success = await self.bigquery_service.insert_cleanup_queue(cleanup_entry)
+            
+            if success:
+                self.logger.info("📋 Cleanup geplant", 
+                            prozess_id=prozess_id,
+                            scheduled_for=scheduled_for.isoformat())
+            else:
+                self.logger.error("❌ Cleanup-Planung fehlgeschlagen", 
+                                prozess_id=prozess_id)
+                
+        except Exception as e:
+            self.logger.error("❌ Fehler bei Cleanup-Planung", 
+                            error=str(e),
+                            prozess_id=prozess_id)
+
     async def get_vehicle_process_history(
         self, 
         fin: str, 

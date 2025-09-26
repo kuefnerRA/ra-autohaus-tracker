@@ -18,75 +18,32 @@ class InfoService:
         "Einkauf": {
             "sla_stunden": 48,
             "priority_range": [1, 3],
-            "beschreibung": "Fahrzeugankauf und Vertragsabwicklung",
-            "verantwortlich": "Einkaufsteam",
-            "schritte": [
-                "Bewertung",
-                "Preisverhandlung", 
-                "Vertragsabschluss",
-                "Zahlungsabwicklung"
-            ]
+            "beschreibung": "Fahrzeugankauf"
         },
         "Anlieferung": {
             "sla_stunden": 24,
             "priority_range": [2, 4],
-            "beschreibung": "Fahrzeugannahme und Ersterfassung",
-            "verantwortlich": "Logistikteam",
-            "schritte": [
-                "Transportkoordination",
-                "Fahrzeugannahme",
-                "Erstinspektion",
-                "Stellplatzzuweisung"
-            ]
+            "beschreibung": "Fahrzeugannahme und Ersterfassung"
         },
         "Aufbereitung": {
             "sla_stunden": 72,
             "priority_range": [3, 5],
-            "beschreibung": "Reinigung und optische Aufbereitung",
-            "verantwortlich": "Aufbereitungsteam",
-            "schritte": [
-                "Innenreinigung",
-                "Außenreinigung",
-                "Politur",
-                "Qualitätskontrolle"
-            ]
+            "beschreibung": "Reinigung und optische Aufbereitung"
         },
         "Foto": {
             "sla_stunden": 24,
             "priority_range": [4, 6],
-            "beschreibung": "Fahrzeugfotografie für Online-Präsenz",
-            "verantwortlich": "Marketing",
-            "schritte": [
-                "Positionierung",
-                "Außenaufnahmen",
-                "Innenraumaufnahmen",
-                "Bildbearbeitung"
-            ]
+            "beschreibung": "Fahrzeugfotografie für Online-Präsenz"
         },
         "Werkstatt": {
             "sla_stunden": 168,  # 7 Tage
             "priority_range": [2, 5],
-            "beschreibung": "Technische Prüfung und Reparaturen",
-            "verantwortlich": "Werkstattteam",
-            "schritte": [
-                "Diagnose",
-                "Reparaturplanung",
-                "Durchführung",
-                "Endkontrolle"
-            ]
+            "beschreibung": "Technische Prüfung und Reparaturen"
         },
         "Verkauf": {
             "sla_stunden": 720,  # 30 Tage
             "priority_range": [1, 3],
-            "beschreibung": "Verkaufsprozess und Übergabe",
-            "verantwortlich": "Verkaufsteam",
-            "schritte": [
-                "Online-Inserat",
-                "Kundenberatung",
-                "Probefahrt",
-                "Vertragsabschluss",
-                "Fahrzeugübergabe"
-            ]
+            "beschreibung": "Verkaufsprozess und Übergabe"
         }
     }
     
@@ -95,25 +52,25 @@ class InfoService:
         "Thomas Küfner": {
             "rolle": "Prozessmanager",
             "bereiche": ["Aufbereitung", "Foto", "Werkstatt"],
-            "email": "thomas.kuefner@reinhardt-automobile.de",
+            "email": "kuefner@reinhardtautomobile.de",
             "max_kapazitaet": 15
         },
         "Maximilian Reinhardt": {
             "rolle": "Geschäftsführer",
             "bereiche": ["Einkauf", "Verkauf"],
-            "email": "maximilian.reinhardt@reinhardt-automobile.de",
+            "email": "reinhardt@reinhardtautomobile.de",
             "max_kapazitaet": 10
         },
         "Team Aufbereitung": {
             "rolle": "Aufbereitungsteam",
             "bereiche": ["Aufbereitung"],
-            "email": "aufbereitung@reinhardt-automobile.de",
+            "email": "aufbereitung@reinhardtautomobile.de",
             "max_kapazitaet": 20
         },
         "Team Werkstatt": {
             "rolle": "Werkstattteam",
             "bereiche": ["Werkstatt"],
-            "email": "werkstatt@reinhardt-automobile.de",
+            "email": "werkstatt@reinhardtautomobile.de",
             "max_kapazitaet": 12
         }
     }

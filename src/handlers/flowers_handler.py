@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Dict, Any, Optional
 from datetime import datetime
+from src.core.mappings import CentralMappings
 from src.handlers.unified_handler import UnifiedHandler
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,8 @@ class FlowersHandler:
     
     def __init__(self, unified_handler: UnifiedHandler):
         self.unified = unified_handler
+        self.logger = logger  # Wichtig für Pylance
+        self.mappings = CentralMappings  # Zentrale Mappings
         logger.info("✅ FlowersHandler initialisiert")
     
     async def process_email(self, email_content: str, subject: str = "") -> Dict[str, Any]:
@@ -54,7 +57,7 @@ class FlowersHandler:
             }
     
     def _parse_email_content(self, content: str, subject: str) -> Dict[str, Any]:
-        """Extrahiert strukturierte Daten aus Email-Text"""
+        """Extrahiert strukturierte Daten aus Email-Text mit zentralen Mappings"""
         
         data = {}
         
@@ -63,16 +66,11 @@ class FlowersHandler:
         if fin_match:
             data["fin"] = fin_match.group(1)
         
-        # Prozess aus Betreff extrahieren
-        if "aufbereitung" in subject.lower():
-            data["prozess_typ"] = "Aufbereitung"
-        elif "werkstatt" in subject.lower():
-            data["prozess_typ"] = "Werkstatt"
+        # Prozess aus Text extrahieren mit zentralen Mappings
+        full_text = f"{subject} {content}"
+        data["prozess_typ"] = self.mappings.extract_prozess_from_text(full_text)
         
-        # Status extrahieren
-        if "abgeschlossen" in content.lower():
-            data["status"] = "abgeschlossen"
-        elif "gestartet" in content.lower():
-            data["status"] = "in_bearbeitung"
+        # Status aus Text extrahieren mit zentralen Mappings
+        data["status"] = self.mappings.extract_status_from_text(full_text)
         
         return data

@@ -24,6 +24,50 @@ from src.models.integration import (
 router = APIRouter(prefix="/fahrzeuge", tags=["Fahrzeuge"])
 logger = structlog.get_logger(__name__)
 
+# Health Check für Vehicle API
+@router.get(
+    "/health",
+    summary="Vehicle API Health",
+    description="Gesundheitscheck für die Vehicle-API."
+)
+async def vehicle_api_health_check(
+    vehicle_service: VehicleService = Depends(get_vehicle_service)
+):
+    """
+    Gesundheitscheck für Vehicle-API und zugehörige Services.
+    
+    **Prüfungen:**
+    - Service-Verbindungen
+    - Basis-Funktionalität
+    - Datenbank-Zugriff
+    
+    **Rückgabe:** Detaillierter Health-Status
+    """
+    try:
+        service_health = await vehicle_service.health_check()
+        
+        return JSONResponse(
+            content={
+                'status': 'healthy',
+                'api': 'vehicle',
+                'timestamp': datetime.now().isoformat(),
+                'service_health': service_health
+            }
+        )
+        
+    except Exception as e:
+        logger.error("❌ Vehicle API Health Check fehlgeschlagen", error=str(e))
+        return JSONResponse(
+            content={
+                'status': 'unhealthy',
+                'api': 'vehicle',
+                'timestamp': datetime.now().isoformat(),
+                'error': str(e)
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+    
+    
 @router.get(
     "/",
     response_model=List[FahrzeugMitProzess],
@@ -394,49 +438,7 @@ async def get_vehicle_statistics(
             detail=f"Fehler beim Berechnen der Statistiken: {str(e)}"
         )
 
-# Health Check für Vehicle API
-@router.get(
-    "/health",
-    summary="Vehicle API Health",
-    description="Gesundheitscheck für die Vehicle-API."
-)
-async def vehicle_api_health_check(
-    vehicle_service: VehicleService = Depends(get_vehicle_service)
-):
-    """
-    Gesundheitscheck für Vehicle-API und zugehörige Services.
-    
-    **Prüfungen:**
-    - Service-Verbindungen
-    - Basis-Funktionalität
-    - Datenbank-Zugriff
-    
-    **Rückgabe:** Detaillierter Health-Status
-    """
-    try:
-        service_health = await vehicle_service.health_check()
-        
-        return JSONResponse(
-            content={
-                'status': 'healthy',
-                'api': 'vehicle',
-                'timestamp': datetime.now().isoformat(),
-                'service_health': service_health
-            }
-        )
-        
-    except Exception as e:
-        logger.error("❌ Vehicle API Health Check fehlgeschlagen", error=str(e))
-        return JSONResponse(
-            content={
-                'status': 'unhealthy',
-                'api': 'vehicle',
-                'timestamp': datetime.now().isoformat(),
-                'error': str(e)
-            },
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE
-        )
-    
+
 @router.get(
     "/{fin}/prozesse",
     response_model=List[FahrzeugProzessResponse],

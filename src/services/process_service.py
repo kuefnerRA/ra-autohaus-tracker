@@ -23,6 +23,7 @@ from src.models.integration import (
     ProzessTyp, Datenquelle
 )
 from decimal import Decimal
+from src.core.mappings import CentralMappings
 
 logger = structlog.get_logger(__name__)
 
@@ -53,54 +54,10 @@ class ProcessService:
     ):
         self.vehicle_service = vehicle_service
         self.bigquery_service = bigquery_service
-        
-        # Prozess-Typ-Mappings für verschiedene Eingaben
-        self.process_mappings = {
-            # Zapier/Flowers Mappings
-            "gwa": ProzessTyp.AUFBEREITUNG,
-            "aufbereitung": ProzessTyp.AUFBEREITUNG,
-            "garage": ProzessTyp.WERKSTATT,
-            "werkstatt": ProzessTyp.WERKSTATT,
-            "fotoshooting": ProzessTyp.FOTO,
-            "foto": ProzessTyp.FOTO,
-            "verkauf": ProzessTyp.VERKAUF,
-            "einkauf": ProzessTyp.EINKAUF,
-            "anlieferung": ProzessTyp.ANLIEFERUNG,
-        }
-        
-        # Bearbeiter-Mappings für Kurznamen
-        self.bearbeiter_mappings = {
-            "Thomas K.": "Thomas Küfner",
-            "Max R.": "Maximilian Reinhardt",
-            "Hans M.": "Hans Müller",
-            "Anna K.": "Anna Klein",
-        }
+        self.logger = logger
 
-        # Status-Mappings für Normalisierung
-        self.status_mappings = {
-            # WARTESCHLANGE Aliases
-            "gestartet": "WARTESCHLANGE",
-            "angelegt": "WARTESCHLANGE",
-            "wartend": "WARTESCHLANGE",
-            "neu": "WARTESCHLANGE",
-            
-            # AKTIV Aliases
-            "in bearbeitung": "AKTIV",
-            "laufend": "AKTIV",
-            "in arbeit": "AKTIV",
-            "bearbeitung": "AKTIV",
-            
-            # BEENDET Aliases
-            "beendet": "BEENDET",
-            "abgeschlossen": "BEENDET",
-            "fertig": "BEENDET",
-            "erledigt": "BEENDET",
-            
-            # Direkte Mappings
-            "warteschlange": "WARTESCHLANGE",
-            "aktiv": "AKTIV"
-        }
-
+        self.mappings = CentralMappings
+        
         # SLA-Definitionen in Stunden
         self.sla_hours = {
             ProzessTyp.EINKAUF: 48,      # 2 Tage
@@ -286,13 +243,12 @@ class ProcessService:
     # ===============================
     # Internal Processing Methods
     # ===============================
-    
     async def _normalize_input_data(
         self,
         data: Dict[str, Any],
         source: ProcessingSource
     ) -> Dict[str, Any]:
-        """Normalisiert Eingabedaten aus verschiedenen Quellen."""
+        """Normalisiert Eingabedaten mit zentralen Mappings."""
         
         normalized = {}
         
@@ -301,25 +257,27 @@ class ProcessService:
         if fin:
             normalized["fin"] = str(fin).upper().replace("-", "").replace(" ", "")
         
-        # Prozesstyp normalisieren
+        # Prozesstyp mit zentralen Mappings normalisieren
         prozess_raw = data.get("prozess_typ") or data.get("prozess_name") or data.get("process_type")
         if prozess_raw:
-            prozess_key = str(prozess_raw).lower().strip()
-            normalized["prozess_typ"] = self.process_mappings.get(prozess_key, prozess_raw)
+            prozess_normalized = self.mappings.normalize_prozess_typ(prozess_raw)
+            # Zu ProzessTyp Enum konvertieren wenn möglich
+            try:
+                normalized["prozess_typ"] = ProzessTyp(prozess_normalized)
+            except ValueError:
+                normalized["prozess_typ"] = prozess_raw  # Fallback
         
-        # Bearbeiter normalisieren
+        # Bearbeiter mit zentralen Mappings normalisieren
         bearbeiter_raw = data.get("bearbeiter") or data.get("bearbeiter_name")
         if bearbeiter_raw:
-            normalized["bearbeiter"] = self.bearbeiter_mappings.get(
-                bearbeiter_raw, bearbeiter_raw
-            )
+            normalized["bearbeiter"] = self.mappings.normalize_bearbeiter(bearbeiter_raw)
         
-        # Status normalisieren
+        # Status mit zentralen Mappings normalisieren
         status_raw = data.get("status") or data.get("neuer_status")
         if status_raw:
-            status_key = str(status_raw).lower().strip()
-            normalized["status"] = self.status_mappings.get(status_key, status_raw.upper())
+            normalized["status"] = self.mappings.normalize_status(status_raw)
         
+        # Rest bleibt gleich...
         # Priorität konvertieren
         if data.get("prioritaet"):
             try:
@@ -333,7 +291,7 @@ class ProcessService:
         # Datenquelle setzen
         source_mapping = {
             ProcessingSource.ZAPIER: Datenquelle.ZAPIER,
-            ProcessingSource.EMAIL: Datenquelle.EMAIL,  # Korrigiert von E_MAIL zu EMAIL
+            ProcessingSource.EMAIL: Datenquelle.EMAIL,
             ProcessingSource.API: Datenquelle.API,
             ProcessingSource.MANUAL: Datenquelle.MANUAL
         }
@@ -343,10 +301,10 @@ class ProcessService:
         normalized["notizen"] = data.get("notizen", "")
         normalized["zusatz_daten"] = data.get("zusatz_daten", {})
         
-        logger.info("🔧 Daten normalisiert",
-                   source=source.value,
-                   original_keys=list(data.keys()),
-                   normalized_keys=list(normalized.keys()))
+        self.logger.info("🔧 Daten mit zentralen Mappings normalisiert",
+                    source=source.value,
+                    original_keys=list(data.keys()),
+                    normalized_keys=list(normalized.keys()))
         
         return normalized
     
@@ -527,9 +485,7 @@ class ProcessService:
         sender: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Parst E-Mail-Inhalte und extrahiert Fahrzeugdaten.
-        
-        Einfache Implementierung - kann erweitert werden.
+        Parst E-Mail-Inhalte mit zentralen Mappings.
         """
         
         # FIN-Pattern (17 alphanumerische Zeichen)
@@ -539,19 +495,59 @@ class ProcessService:
         if not fin_matches:
             return None
         
-        # Einfache Keyword-Extraktion
+        # Kombiniere Subject und Content für Analyse
+        full_text = f"{subject} {content}"
+        
+        # Keywords für Prozesstyp-Erkennung
+        prozess_keywords = {
+            'verkauf': ['verkauf', 'verkaufsbereit', 'verkäufer', 'vk'],
+            'foto': ['foto', 'fotografiert', 'bilder', 'fotos'],
+            'werkstatt': ['werkstatt', 'reparatur', 'service', 'inspektion'],
+            'aufbereitung': ['aufbereitung', 'gwa', 'reinigung', 'politur'],
+            'anlieferung': ['anlieferung', 'angekommen', 'eingetroffen'],
+            'einkauf': ['einkauf', 'angekauft', 'erworben', 'gekauft']
+        }
+        
+        detected_prozess = 'aufbereitung'  # Default
+        for prozess_typ, keywords in prozess_keywords.items():
+            if any(keyword in full_text.lower() for keyword in keywords):
+                detected_prozess = prozess_typ
+                break
+        
+        # Keywords für Status-Erkennung
+        status_keywords = {
+            'beendet': ['fertig', 'abgeschlossen', 'beendet', 'erledigt'],
+            'aktiv': ['läuft', 'in bearbeitung', 'aktiv', 'arbeite'],
+            'warteschlange': ['wartet', 'wartend', 'bereit für', 'angemeldet']
+        }
+        
+        detected_status = 'warteschlange'  # Default
+        for status, keywords in status_keywords.items():
+            if any(keyword in full_text.lower() for keyword in keywords):
+                detected_status = status
+                break
+        
+        # Bearbeiter aus Sender extrahieren
+        bearbeiter_raw = sender.split('@')[0].replace('.', ' ').title() if '@' in sender else 'System'
+        
         extracted_data = {
             "fin": fin_matches[0],
-            "prozess_typ": "aufbereitung",  # Default
-            "status": "E-Mail empfangen",
-            "bearbeiter": "System",
-            "notizen": f"Automatisch aus E-Mail extrahiert. Betreff: {subject[:100]}",
+            "prozess_typ": detected_prozess,  # Wird später normalisiert
+            "status": detected_status,  # Wird später normalisiert
+            "bearbeiter": bearbeiter_raw,  # Wird später normalisiert
+            "notizen": f"Email von {sender}: {subject}",
             "zusatz_daten": {
                 "email_sender": sender,
                 "email_subject": subject,
-                "email_parsing_method": "regex_extraction"
+                "detected_prozess": detected_prozess,
+                "detected_status": detected_status
             }
         }
+        
+        self.logger.info("📧 Email geparst",
+                        fin=fin_matches[0],
+                        prozess=detected_prozess,
+                        status=detected_status)
         
         return extracted_data
     
@@ -586,8 +582,9 @@ class ProcessService:
                     "zapier_integration": True,
                     "email_processing": True,
                     "sla_calculation": True,
-                    "process_mappings": len(self.process_mappings),
-                    "bearbeiter_mappings": len(self.bearbeiter_mappings)
+                    "process_mappings": len(self.mappings.PROZESS_MAPPINGS),  # <- GEÄNDERT
+                    "status_mappings": len(self.mappings.STATUS_MAPPINGS),   # <- NEU
+                    "bearbeiter_mappings": len(self.mappings.BEARBEITER_MAPPINGS)  # <- GEÄNDERT
                 },
                 "timestamp": datetime.now().isoformat()
             }

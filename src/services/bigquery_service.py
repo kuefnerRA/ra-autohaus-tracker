@@ -1082,12 +1082,25 @@ class BigQueryService:
     async def insert_cleanup_queue(self, cleanup_entry: Dict[str, Any]) -> bool:
         """
         Fügt einen Eintrag in die cleanup_queue Tabelle ein.
+        
+        Args:
+            cleanup_entry: Dict mit queue_id, fin, cleanup_type, prozess_id, etc.
         """
         try:
             import uuid
             cleanup_entry['queue_id'] = cleanup_entry.get('queue_id', str(uuid.uuid4()))
             
-            # Client-Prüfung hinzufügen
+            # Sicherstellen dass alle Pflichtfelder vorhanden sind
+            required_fields = ['queue_id', 'fin', 'cleanup_type', 'scheduled_for']
+            for field in required_fields:
+                if field not in cleanup_entry:
+                    self.logger.error(f"❌ Pflichtfeld {field} fehlt in cleanup_entry")
+                    return False
+            
+            # Default-Werte setzen
+            cleanup_entry.setdefault('processed', False)
+            cleanup_entry.setdefault('created_at', datetime.now().isoformat())
+            
             if not self.client:
                 self.logger.error("❌ BigQuery Client nicht verfügbar")
                 return False
@@ -1100,7 +1113,10 @@ class BigQueryService:
                 self.logger.error(f"❌ Fehler beim Einfügen in cleanup_queue: {errors}")
                 return False
                 
-            self.logger.info(f"✅ Cleanup-Task geplant für {cleanup_entry['fin']}")
+            self.logger.info(f"✅ Cleanup-Task geplant", 
+                            fin=cleanup_entry['fin'],
+                            prozess_id=cleanup_entry.get('prozess_id'),
+                            cleanup_type=cleanup_entry['cleanup_type'])
             return True
             
         except Exception as e:

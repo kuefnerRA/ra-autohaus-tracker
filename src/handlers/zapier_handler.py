@@ -16,7 +16,8 @@ class ZapierHandler:
     
     def __init__(self, unified_handler: UnifiedHandler):
         self.unified = unified_handler
-        self.transformer = DataTransformer()  # NEU
+        self.transformer = DataTransformer()
+        self.logger = logger  # Wichtig für Pylance
         logger.info("✅ ZapierHandler initialisiert")
     
     async def process_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -4,7 +4,7 @@
 set -e
 
 PROJECT_ID="ra-autohaus-tracker"
-REGION="europe-west1"
+REGION="europe-west3"
 SERVICE_NAME="ra-autohaus-tracker"
 SERVICE_ACCOUNT="ra-dev-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com"
 

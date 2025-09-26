@@ -1,15 +1,16 @@
 """
 FastAPI Main Application - Vollversion
 Reinhardt Automobile GmbH - RA Autohaus Tracker
-
-Ersetze die bestehende src/main.py mit dieser erweiterten Version.
 """
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import logging
 import asyncio
 
-from dotenv import load_dotenv
+
 from datetime import datetime
 from contextlib import asynccontextmanager
 

@@ -4,7 +4,7 @@
 set -e  # Exit bei Fehlern
 
 PROJECT_ID="ra-autohaus-tracker"
-REGION="europe-west1"
+REGION="europe-west3"
 SERVICE_ACCOUNT="ra-dev-cloud-run@${PROJECT_ID}.iam.gserviceaccount.com"
 
 echo "🔧 Konfiguriere Google Cloud Projekt..."
