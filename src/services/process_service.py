@@ -288,6 +288,26 @@ class ProcessService:
         # Zeitstempel
         normalized["start_timestamp"] = datetime.now()
         
+        # In _normalize_input_data, nach Zeile ~290 hinzufügen:
+
+        # Individuelle Deadline verarbeiten
+        if data.get("individuelle_deadline"):
+            try:
+                # Verschiedene Datumsformate unterstützen
+                deadline_raw = data["individuelle_deadline"]
+                if isinstance(deadline_raw, str):
+                    # ISO-Format oder deutsches Format
+                    if "T" in deadline_raw:
+                        normalized["individuelle_deadline"] = datetime.fromisoformat(deadline_raw)
+                    else:
+                        # Deutsches Format DD.MM.YYYY
+                        from datetime import datetime as dt
+                        normalized["individuelle_deadline"] = dt.strptime(deadline_raw, "%d.%m.%Y")
+                elif isinstance(deadline_raw, datetime):
+                    normalized["individuelle_deadline"] = deadline_raw
+            except Exception as e:
+                self.logger.warning(f"Konnte individuelle Deadline nicht parsen: {e}")
+
         # Datenquelle setzen
         source_mapping = {
             ProcessingSource.ZAPIER: Datenquelle.ZAPIER,
@@ -308,10 +328,7 @@ class ProcessService:
         
         return normalized
     
-    async def _validate_business_rules(
-        self,
-        data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _validate_business_rules(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Validiert Geschäftsregeln für Fahrzeugprozesse."""
         
         errors = []
@@ -323,8 +340,15 @@ class ProcessService:
         elif len(data["fin"]) != 17:
             errors.append("FIN muss 17 Zeichen haben")
         
-        # Prozesstyp erforderlich  
-        if not data.get("prozess_typ"):
+        # Prozesstyp MUSS gültig sein
+        if data.get("prozess_typ"):
+            if not isinstance(data["prozess_typ"], ProzessTyp):
+                # Versuche zu konvertieren
+                try:
+                    ProzessTyp(data["prozess_typ"])
+                except ValueError:
+                    errors.append(f"Ungültiger Prozesstyp: {data['prozess_typ']}")
+        else:
             errors.append("Prozesstyp ist erforderlich")
         
         # Status erforderlich
@@ -490,6 +514,10 @@ class ProcessService:
         
         # FIN-Pattern (17 alphanumerische Zeichen)
         fin_pattern = r'\b[A-Z0-9]{17}\b'
+
+        # WICHTIG: Suche FIN in BEIDEN - Subject UND Content
+        combined_text = f"{subject} {content}".upper()
+
         fin_matches = re.findall(fin_pattern, content.upper())
         
         if not fin_matches:
@@ -532,20 +560,22 @@ class ProcessService:
         
         extracted_data = {
             "fin": fin_matches[0],
-            "prozess_typ": detected_prozess,  # Wird später normalisiert
-            "status": detected_status,  # Wird später normalisiert
-            "bearbeiter": bearbeiter_raw,  # Wird später normalisiert
+            "prozess_typ": detected_prozess,
+            "status": detected_status,
+            "bearbeiter": bearbeiter_raw,
             "notizen": f"Email von {sender}: {subject}",
             "zusatz_daten": {
                 "email_sender": sender,
                 "email_subject": subject,
                 "detected_prozess": detected_prozess,
-                "detected_status": detected_status
+                "detected_status": detected_status,
+                "fin_found_in": "subject" if fin_matches[0] in subject.upper() else "content"
             }
         }
         
         self.logger.info("📧 Email geparst",
                         fin=fin_matches[0],
+                        fin_source="subject" if fin_matches[0] in subject.upper() else "content",
                         prozess=detected_prozess,
                         status=detected_status)
         

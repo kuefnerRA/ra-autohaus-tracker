@@ -108,20 +108,21 @@ class FahrzeugStammResponse(FahrzeugStammCreate, BaseTimestampModel):
 
 # Prozess Models
 class FahrzeugProzessCreate(BaseModel):
-    """Model für Fahrzeugprozess-Erstellung."""
-    prozess_id: Optional[str] = Field(None, min_length=1, max_length=100, description="Eindeutige Prozess-ID")
-    fin: str = Field(..., min_length=17, max_length=21, description="Fahrzeug-FIN")
-    prozess_typ: ProzessTyp = Field(..., description="Art des Prozesses")
-    status: str = Field(..., min_length=1, max_length=100, description="Aktueller Status")
-    bearbeiter: Optional[str] = Field(None, max_length=100, description="Zuständiger Bearbeiter")
-    prioritaet: Optional[str] = Field(None, description="Priorität ")
-    anlieferung_datum: Optional[date] = Field(None, description="Datum der Fahrzeug-Anlieferung")
-    start_timestamp: Optional[datetime] = Field(None, description="Prozess-Startzeit")
-    ende_timestamp: Optional[datetime] = Field(None, description="Prozess-Endzeit")
-    sla_tage: Optional[int] = Field(None, gt=0, description="SLA-Vorgabe in Tagen")
-    datenquelle: Optional[Datenquelle] = Field(Datenquelle.API, description="Quelle der Prozessdaten")
-    notizen: Optional[str] = Field(None, max_length=1000, description="Prozess-Notizen")
-    zusatz_daten: Optional[Dict[str, Any]] = Field(None, description="Zusätzliche strukturierte Daten")
+    """Schema für Prozess-Erstellung"""
+    prozess_id: Optional[str] = None
+    fin: str
+    prozess_typ: Union[ProzessTyp, str]
+    status: str = "WARTESCHLANGE"
+    bearbeiter: Optional[str] = None
+    prioritaet: Optional[str] = None
+    anlieferung_datum: Optional[date] = None
+    start_timestamp: Optional[datetime] = None
+    ende_timestamp: Optional[datetime] = None
+    sla_tage: Optional[int] = None
+    individuelle_deadline: Optional[datetime] = None  # NEU
+    datenquelle: Datenquelle = Datenquelle.API
+    notizen: Optional[str] = None
+    zusatz_daten: Optional[Dict[str, Any]] = None
     
     @field_validator('prioritaet')
     @classmethod
@@ -148,8 +149,25 @@ class FahrzeugProzessCreate(BaseModel):
                 raise ValueError('Ende-Zeit muss nach Start-Zeit liegen')
         return v
 
-class FahrzeugProzessResponse(FahrzeugProzessCreate, BaseTimestampModel):
-    """Model für Fahrzeugprozess-Response."""
+class FahrzeugProzessResponse(BaseModel):
+    """Response-Schema für Fahrzeugprozess"""
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    prozess_id: str
+    fin: str
+    prozess_typ: Union[ProzessTyp, str]
+    status: str
+    bearbeiter: Optional[str] = None
+    prioritaet: Optional[str] = None
+    anlieferung_datum: Optional[date] = None
+    start_timestamp: Optional[datetime] = None
+    ende_timestamp: Optional[datetime] = None
+    sla_tage: Optional[int] = None
+    individuelle_deadline: Optional[datetime] = None  # NEU
+    individuelle_deadline_gesetzt: Optional[bool] = None  # NEU
+    datenquelle: Optional[str] = None
+    notizen: Optional[str] = None
+    zusatz_daten: Optional[Dict[str, Any]] = None
     dauer_minuten: Optional[int] = None
     standzeit_tage: Optional[int] = None
     sla_deadline_datum: Optional[date] = None
@@ -170,6 +188,7 @@ class FahrzeugProzessRequest(BaseModel):
     sla_tage: Optional[int] = Field(None, gt=0, description="SLA-Vorgabe in Tagen")
     datenquelle: Optional[Datenquelle] = Field(Datenquelle.API, description="Quelle der Prozessdaten")
     notizen: Optional[str] = Field(None, max_length=1000, description="Prozess-Notizen")
+    individuelle_deadline: Optional[Union[datetime, str]] = None  # NEU
     zusatz_daten: Optional[Dict[str, Any]] = Field(None, description="Zusätzliche strukturierte Daten")
     
     @field_validator('prioritaet')

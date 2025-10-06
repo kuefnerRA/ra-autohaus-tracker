@@ -167,7 +167,7 @@ class VehicleService:
                     )
                 
                 # SLA-Berechnung
-                prozess_dict = prozess_data.model_dump(exclude_none=True)
+                prozess_dict = prozess_data.model_dump(exclude_none=False)
                 prozess_dict = await self._calculate_sla_data(prozess_dict)
                 
                 await self.bigquery_service.create_fahrzeug_prozess(prozess_dict)
@@ -408,6 +408,11 @@ class VehicleService:
         Beendet automatisch alle noch offenen Prozesse des Fahrzeugs.
         """
         try:
+            # DEBUG
+            self.logger.info("🔍 DEBUG - prozess_data empfangen", 
+                            has_deadline=hasattr(prozess_data, 'individuelle_deadline'),
+                            deadline_value=getattr(prozess_data, 'individuelle_deadline', None))
+
             # Validierung
             if not self._validate_fin(fin):
                 raise ValueError(f"Ungültige FIN: {fin}")
@@ -430,8 +435,17 @@ class VehicleService:
             # Prozess-Daten vorbereiten
             prozess_dict = prozess_data.model_dump(exclude_none=True)
             prozess_dict['fin'] = fin
-            
-            # SLA-Daten berechnen
+
+            # DEBUG
+            self.logger.info("🔍 DEBUG - prozess_dict vor SLA", 
+                            has_deadline='individuelle_deadline' in prozess_dict,
+                            keys=list(prozess_dict.keys()))
+
+            # Individuelle Deadline durchreichen wenn vorhanden
+            if prozess_data.individuelle_deadline:
+                prozess_dict['individuelle_deadline'] = prozess_data.individuelle_deadline
+
+            # SLA-Daten berechnen (berücksichtigt jetzt individuelle_deadline)
             prozess_dict = await self._calculate_sla_data(prozess_dict)
             
             # Bearbeiter normalisieren
@@ -832,12 +846,56 @@ class VehicleService:
         return FahrzeugMitProzess(**fahrzeug_raw)
     
     async def _calculate_sla_data(self, prozess_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Berechnet SLA-relevante Felder."""
+        """
+        Berechnet SLA-relevante Felder.
+        Berücksichtigt individuelle Deadlines wenn vorhanden.
+        """
+        
+        # DEBUG
+        self.logger.info("🔍 DEBUG - _calculate_sla_data Start",
+                        has_deadline='individuelle_deadline' in prozess_data,
+                        deadline_value=prozess_data.get('individuelle_deadline'))
+        
+
+        # Prüfe auf individuelle Deadline
+        if prozess_data.get('individuelle_deadline'):
+            # Individuelle Deadline hat Vorrang
+            if isinstance(prozess_data['individuelle_deadline'], str):
+                deadline = datetime.fromisoformat(prozess_data['individuelle_deadline'].replace('Z', '+00:00'))
+            else:
+                deadline = prozess_data['individuelle_deadline']
+            
+            # WICHTIG: Entferne Timezone-Info für Konsistenz
+            deadline_naive = deadline.replace(tzinfo=None) if deadline.tzinfo else deadline
+            
+            start_time = prozess_data.get('start_timestamp') or prozess_data.get('erstellt_am') or datetime.now()
+            if isinstance(start_time, str):
+                start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            
+            # WICHTIG: Entferne auch hier Timezone-Info
+            start_time_naive = start_time.replace(tzinfo=None) if hasattr(start_time, 'tzinfo') and start_time.tzinfo else start_time
+            
+            # Berechne SLA-Stunden aus individueller Deadline (beide naive)
+            sla_stunden = (deadline_naive - start_time_naive).total_seconds() / 3600
+            
+            prozess_data['sla_deadline_datum'] = deadline_naive.date()
+            prozess_data['tage_bis_sla_deadline'] = (deadline_naive.date() - date.today()).days
+            prozess_data['sla_tage'] = max(1, int(sla_stunden // 24))
+            prozess_data['individuelle_deadline_gesetzt'] = True
+            
+            self.logger.info("📅 Individuelle Deadline gesetzt",
+                            fin=prozess_data.get('fin'),
+                            deadline=deadline_naive.isoformat(),
+                            tage_bis_deadline=prozess_data['tage_bis_sla_deadline'])
+            
+            return prozess_data
+        
+        # Standard SLA-Berechnung (wie bisher)
         prozess_typ = prozess_data.get('prozess_typ')
         
         if not prozess_typ:
             return prozess_data
-            
+        
         # String zu Enum konvertieren falls nötig
         if isinstance(prozess_typ, str):
             try:
@@ -853,7 +911,7 @@ class VehicleService:
         config = self.PROZESS_CONFIG[prozess_typ_enum]
         sla_stunden = config['sla_stunden']
         
-        # SLA-Deadline berechnen
+        # Standard SLA-Deadline berechnen
         start_time = prozess_data.get('start_timestamp') or prozess_data.get('erstellt_am') or datetime.now()
         if isinstance(start_time, str):
             start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
@@ -867,6 +925,7 @@ class VehicleService:
         
         # SLA-Tage setzen
         prozess_data['sla_tage'] = max(1, sla_stunden // 24)
+        prozess_data['individuelle_deadline_gesetzt'] = False
         
         return prozess_data
     
@@ -936,6 +995,10 @@ class VehicleService:
     
     def _is_sla_critical(self, fahrzeug: FahrzeugMitProzess) -> bool:
         """Prüft ob ein Fahrzeug SLA-kritisch ist."""
+        # BEENDETE Prozesse sind NIE kritisch
+        if fahrzeug.status in ['BEENDET', 'VERKAUFT']:
+            return False
+            
         if not fahrzeug.tage_bis_sla_deadline:
             return False
         
