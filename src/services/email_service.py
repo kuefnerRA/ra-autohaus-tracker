@@ -113,11 +113,13 @@ class EmailParser:
             Tuple[fahrzeug_dict, prozess_dict] oder (None, None) bei Fehler
         """
         try:
+
+
             # Text normalisieren
             body = body.replace('\r\n', '\n').replace('\r', '\n')
             
             # FIN extrahieren (Pflichtfeld)
-            fin_match = re.search(self.PATTERNS['fin'], body, re.IGNORECASE)
+            fin_match = re.search(self.PATTERNS['fin'], f"{subject}\n{body}", re.IGNORECASE)
             if not fin_match:
                 self.logger.warning("⚠️ Keine FIN in Email gefunden")
                 return None, None
@@ -231,7 +233,8 @@ class EmailService:
                  email_address: str,
                  password: str,
                  processed_folder: str = "Verarbeitet",
-                 error_folder: str = "Fehler"):
+                 error_folder: str = "Fehler",
+                 ignored_folder: str = "Ignoriert"):
         """
         Initialisiert Email-Service.
         
@@ -247,12 +250,13 @@ class EmailService:
         self.password = password
         self.processed_folder = processed_folder
         self.error_folder = error_folder
+        self.ignored_folder = ignored_folder
         self.parser = EmailParser()
         self.logger = logger.bind(service="EmailService")
     
     async def process_unread_emails(self, 
-                                   vehicle_service,
-                                   folder: str = "INBOX") -> Dict[str, Any]:
+                               vehicle_service,
+                               folder: str = "INBOX") -> Dict[str, Any]:
         """
         Verarbeitet alle ungelesenen Emails im angegebenen Ordner.
         
@@ -260,7 +264,7 @@ class EmailService:
             vehicle_service: VehicleService Instanz für Fahrzeug-Operationen
             folder: IMAP-Ordner zum Verarbeiten
         """
-        from src.models.integration import FahrzeugStammCreate, FahrzeugProzessRequest
+        from src.models.integration import FahrzeugStammCreate, FahrzeugProzessRequest, FahrzeugProzessCreate
         
         results = {
             'processed': 0,
@@ -288,6 +292,8 @@ class EmailService:
             email_ids = messages[0].split()
             
             for email_id in email_ids:
+                email_processed_successfully = False  # Flag für erfolgreiche Verarbeitung
+                
                 try:
                     # Email abrufen
                     status, msg_data = mail.fetch(email_id, '(RFC822)')
@@ -307,13 +313,19 @@ class EmailService:
                     # Fahrzeugdaten extrahieren
                     fahrzeug_dict, prozess_dict = self.parser.parse_email_content(subject, body)
                     
+                    if not fahrzeug_dict:
+                        mail.store(email_id, '+FLAGS', '\\Seen')
+                        self._move_email(mail, email_id, self.ignored_folder)
+                        self.logger.debug(f"Email ohne FIN in 'Ignoriert' verschoben: {subject[:50]}")
+                        continue
+
                     if fahrzeug_dict:
                         # Prüfen ob Fahrzeug existiert
                         existing = await vehicle_service.get_vehicle_details(fahrzeug_dict['fin'])
                         
                         if existing:
-                            # Update existierendes Fahrzeug
-                            self.logger.info("🔄 Fahrzeug existiert - starte Update", 
+                            # UPDATE existierendes Fahrzeug
+                            self.logger.info("📄 Fahrzeug existiert - starte Update", 
                                             fin=fahrzeug_dict['fin'])
                             
                             # Bereite Update-Daten vor (nur geänderte Felder)
@@ -338,17 +350,44 @@ class EmailService:
                                 
                                 if update_result['changes_made']:
                                     results['fahrzeuge_updated'] += 1
+                                    email_processed_successfully = True
                                     self.logger.info("✅ Fahrzeug aktualisiert", 
                                                 fin=fahrzeug_dict['fin'],
                                                 fields_updated=update_result['fields_updated'])
                                 else:
+                                    # Keine Änderungen, aber trotzdem erfolgreich verarbeitet
+                                    email_processed_successfully = True
                                     self.logger.info("ℹ️ Keine Änderungen notwendig", 
                                                 fin=fahrzeug_dict['fin'])
                             else:
+                                # Keine neuen Daten, aber trotzdem erfolgreich verarbeitet
+                                email_processed_successfully = True
                                 self.logger.info("ℹ️ Keine neuen Daten zum Update", 
                                             fin=fahrzeug_dict['fin'])
+                            
+                            # Prozess erstellen falls vorhanden
+                            if prozess_dict and email_processed_successfully:
+                                try:
+                                    # FIN zum prozess_dict hinzufügen
+                                    prozess_dict['fin'] = fahrzeug_dict['fin']
+                                    
+                                    # FahrzeugProzessCreate statt Request verwenden
+                                    from src.models.integration import FahrzeugProzessCreate
+                                    prozess_create = FahrzeugProzessCreate(**prozess_dict)
+                                    
+                                    # Verwende create_vehicle_process statt create_or_update_process
+                                    await vehicle_service.create_vehicle_process(
+                                        fin=fahrzeug_dict['fin'],
+                                        prozess_data=prozess_create
+                                    )
+                                    results['prozesse_created'] += 1
+                                    self.logger.info(f"✅ Prozess erstellt für Update - FIN: {fahrzeug_dict['fin']}")
+                                except Exception as e:
+                                    self.logger.warning(f"⚠️ Prozess konnte nicht erstellt werden: {str(e)}")
+                                    # Email trotzdem als erfolgreich markieren wenn Fahrzeug-Update geklappt hat
+                        
                         else:
-                            # Neues Fahrzeug erstellen
+                            # NEUES Fahrzeug erstellen
                             fahrzeug = FahrzeugStammCreate(**fahrzeug_dict)
                             
                             # Prozess-Daten vorbereiten falls vorhanden
@@ -361,17 +400,23 @@ class EmailService:
                             
                             created = await vehicle_service.create_complete_vehicle(
                                 fahrzeug_data=fahrzeug,
-                                prozess_data=prozess_to_create  # <- Hier den Prozess übergeben!
+                                prozess_data=prozess_to_create
                             )
                             
                             if created:
                                 results['fahrzeuge_created'] += 1
-                            
-                            # Email als gelesen markieren und verschieben
+                                email_processed_successfully = True
+                                if prozess_to_create:
+                                    results['prozesse_created'] += 1
+                        
+                        # Email als verarbeitet markieren wenn erfolgreich
+                        if email_processed_successfully:
+                            results['processed'] += 1
+                            # Email als gelesen markieren
                             mail.store(email_id, '+FLAGS', '\\Seen')
+                            # Email in Verarbeitet-Ordner verschieben
                             self._move_email(mail, email_id, self.processed_folder)
-                            
-                        results['processed'] += 1
+                            self.logger.info(f"📧 Email verschoben nach 'Verarbeitet' - FIN: {fahrzeug_dict['fin']}")
                         
                 except Exception as e:
                     self.logger.error("❌ Fehler bei Email-Verarbeitung", 
@@ -393,18 +438,14 @@ class EmailService:
             self.logger.error("❌ Fehler bei Email-Service", error=str(e))
             results['errors'].append(str(e))
             return results
-    
+
     def _ensure_folders_exist(self, mail):
         """Stellt sicher, dass Verarbeitungs-Ordner existieren."""
-        try:
-            mail.create(self.processed_folder)
-        except:
-            pass  # Ordner existiert bereits
-        
-        try:
-            mail.create(self.error_folder)
-        except:
-            pass  # Ordner existiert bereits
+        for folder in [self.processed_folder, self.error_folder, self.ignored_folder]:
+            try:
+                mail.create(folder)
+            except:
+                pass  # Ordner existiert bereits
     
     def _move_email(self, mail, email_id, target_folder):
         """Verschiebt Email in Zielordner."""
@@ -417,14 +458,24 @@ class EmailService:
             self.logger.warning("⚠️ Email konnte nicht verschoben werden", error=str(e))
     
     def _decode_header(self, header: str) -> str:
-        """Dekodiert Email-Header."""
+        """Dekodiert Email-Header vollständig."""
         if not header:
             return ""
         
-        decoded = decode_header(header)[0]
-        if isinstance(decoded[0], bytes):
-            return decoded[0].decode(decoded[1] or 'utf-8')
-        return decoded[0]
+        # Dekodiere ALLE Teile des Headers
+        decoded_parts = decode_header(header)
+        result = []
+        
+        for part, encoding in decoded_parts:
+            if isinstance(part, bytes):
+                # Dekodiere mit dem angegebenen Encoding
+                result.append(part.decode(encoding or 'utf-8', errors='ignore'))
+            else:
+                # Bereits ein String
+                result.append(part)
+        
+        # Füge alle Teile zusammen
+        return ''.join(result)
     
     def _extract_body(self, msg) -> str:
         """Extrahiert Text-Body aus Email."""

@@ -58,7 +58,8 @@ async def process_emails(
         email_address=cast(str, email_address),
         password=cast(str, email_password),
         processed_folder=os.getenv('EMAIL_PROCESSED_FOLDER', 'Verarbeitet'),
-        error_folder=os.getenv('EMAIL_ERROR_FOLDER', 'Fehler')
+        error_folder=os.getenv('EMAIL_ERROR_FOLDER', 'Fehler'),
+        ignored_folder=os.getenv('EMAIL_IGNORED_FOLDER', 'Ignoriert') 
         )
         
         # Im Hintergrund verarbeiten
@@ -124,7 +125,8 @@ async def process_emails_sync(
         email_address=cast(str, email_address),
         password=cast(str, email_password),
         processed_folder=os.getenv('EMAIL_PROCESSED_FOLDER', 'Verarbeitet'),
-        error_folder=os.getenv('EMAIL_ERROR_FOLDER', 'Fehler')
+        error_folder=os.getenv('EMAIL_ERROR_FOLDER', 'Fehler'),
+        ignored_folder=os.getenv('EMAIL_IGNORED_FOLDER', 'Ignoriert')
     )  
         # Synchron verarbeiten
         results = await email_service.process_unread_emails(vehicle_service)
@@ -168,7 +170,7 @@ async def check_email_config() -> Dict[str, Any]:
     if all([config['imap_server'], config['email_address'], config['password_set']]):
         config['configured'] = True
     
-    return config  # <- Diese Zeile fehlt!
+    return config
     
 @router.get(
     "/status",
@@ -296,7 +298,8 @@ async def test_process_single_email(
             email_address=cast(str, email_address),
             password=cast(str, email_password),
             processed_folder=os.getenv('EMAIL_PROCESSED_FOLDER', 'Verarbeitet'),
-            error_folder=os.getenv('EMAIL_ERROR_FOLDER', 'Fehler')
+            error_folder=os.getenv('EMAIL_ERROR_FOLDER', 'Fehler'),
+            ignored_folder=os.getenv('EMAIL_IGNORED_FOLDER', 'Ignoriert')
         )
         
         # Nur erste Email holen

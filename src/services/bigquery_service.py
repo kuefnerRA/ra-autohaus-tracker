@@ -940,6 +940,8 @@ class BigQueryService:
             'sla_tage': prozess_data.get('sla_tage'),
             'sla_deadline_datum': prozess_data.get('sla_deadline_datum'),
             'tage_bis_sla_deadline': prozess_data.get('tage_bis_sla_deadline'),
+            'individuelle_deadline': prozess_data.get('individuelle_deadline'),
+            'individuelle_deadline_gesetzt': prozess_data.get('individuelle_deadline_gesetzt'),
             'datenquelle': prozess_data.get('datenquelle', 'api'),
             'notizen': prozess_data.get('notizen'),
             'zusatz_daten': json.dumps(prozess_data.get('zusatz_daten', {})),

@@ -851,6 +851,9 @@ class VehicleService:
         Berücksichtigt individuelle Deadlines wenn vorhanden.
         """
         
+        # Kopiere das Original-Dict, um keine Felder zu verlieren!
+        result = prozess_data.copy()  
+
         # DEBUG
         self.logger.info("🔍 DEBUG - _calculate_sla_data Start",
                         has_deadline='individuelle_deadline' in prozess_data,
@@ -882,6 +885,7 @@ class VehicleService:
             prozess_data['tage_bis_sla_deadline'] = (deadline_naive.date() - date.today()).days
             prozess_data['sla_tage'] = max(1, int(sla_stunden // 24))
             prozess_data['individuelle_deadline_gesetzt'] = True
+            prozess_data['individuelle_deadline'] = deadline_naive.isoformat() 
             
             self.logger.info("📅 Individuelle Deadline gesetzt",
                             fin=prozess_data.get('fin'),

@@ -259,7 +259,6 @@ async def update_vehicle_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Fehler beim Status-Update: {str(e)}"
         )
-
 @router.post(
     "/{fin}/prozess",
     response_model=FahrzeugProzessResponse,
@@ -269,7 +268,7 @@ async def update_vehicle_status(
 )
 async def create_vehicle_process(
     fin: str,
-    prozess_request: FahrzeugProzessRequest,  # <- Verwende FahrzeugProzessRequest
+    prozess_request: FahrzeugProzessRequest,
     vehicle_service: VehicleService = Depends(get_vehicle_service)
 ) -> FahrzeugProzessResponse:
     """
@@ -285,6 +284,7 @@ async def create_vehicle_process(
     - `bearbeiter`: Optional - Zuständiger Bearbeiter
     - `prioritaet`: Optional - Priorität (1-9)
     - `notizen`: Optional - Notizen zum Prozess
+    - `individuelle_deadline`: Optional - Individuelle Deadline für eilige Aufträge
     
     **Rückgabe:** Erstellter Prozess mit allen Daten inkl. SLA
     """
@@ -298,11 +298,30 @@ async def create_vehicle_process(
                 detail=f"Fahrzeug mit FIN {fin} nicht gefunden"
             )
         
-        # Konvertiere Request zu vollständigem FahrzeugProzessCreate
+        # Request-Daten in Dict umwandeln für Flexibilität
+        prozess_dict = prozess_request.model_dump()
+        
+        # Individuelle Deadline verarbeiten wenn vorhanden
+        if hasattr(prozess_request, 'individuelle_deadline') and prozess_request.individuelle_deadline:
+            from datetime import datetime
+            deadline = prozess_request.individuelle_deadline
+            if isinstance(deadline, str):
+                # Parse ISO-Format String zu datetime
+                prozess_dict['individuelle_deadline'] = datetime.fromisoformat(
+                    deadline.replace('Z', '+00:00')
+                )
+            else:
+                prozess_dict['individuelle_deadline'] = deadline
+            
+            logger.info("📅 Individuelle Deadline erkannt", 
+                       fin=fin,
+                       deadline=prozess_dict['individuelle_deadline'])
+        
+        # Konvertiere zu vollständigem FahrzeugProzessCreate
         prozess_data = FahrzeugProzessCreate(
             prozess_id=vehicle_service._generate_process_id(fin, prozess_request.prozess_typ),
             fin=fin,
-            **prozess_request.model_dump()
+            **prozess_dict
         )
         
         # Prozess erstellen
@@ -314,7 +333,8 @@ async def create_vehicle_process(
         logger.info("✅ Fahrzeugprozess erfolgreich erstellt", 
                    fin=fin,
                    prozess_id=created_process.prozess_id,
-                   prozess_typ=prozess_request.prozess_typ)
+                   prozess_typ=prozess_request.prozess_typ,
+                   individuelle_deadline_gesetzt=getattr(created_process, 'individuelle_deadline_gesetzt', False))
         
         return created_process
         
