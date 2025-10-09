@@ -11,10 +11,11 @@ Unified Data Processing für alle Eingangswege:
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
 from enum import Enum
 import re
 import structlog
+from decimal import Decimal
 
 from src.services.bigquery_service import BigQueryService
 from src.services.vehicle_service import VehicleService
@@ -22,8 +23,8 @@ from src.models.integration import (
     FahrzeugStammCreate, FahrzeugProzessCreate, 
     ProzessTyp, Datenquelle
 )
-from decimal import Decimal
 from src.core.mappings import CentralMappings
+from src.core.process_config import ProcessConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -47,26 +48,11 @@ class ProcessService:
     - Integration mit BigQuery über VehicleService
     """
     
-    def __init__(
-        self, 
-        vehicle_service: VehicleService,
-        bigquery_service: BigQueryService
-    ):
+    def __init__(self, vehicle_service: VehicleService, bigquery_service: BigQueryService):
         self.vehicle_service = vehicle_service
         self.bigquery_service = bigquery_service
         self.logger = logger
-
         self.mappings = CentralMappings
-        
-        # SLA-Definitionen in Stunden
-        self.sla_hours = {
-            ProzessTyp.EINKAUF: 48,      # 2 Tage
-            ProzessTyp.ANLIEFERUNG: 24,  # 1 Tag
-            ProzessTyp.AUFBEREITUNG: 72, # 3 Tage  
-            ProzessTyp.FOTO: 24,         # 1 Tag
-            ProzessTyp.WERKSTATT: 120,   # 5 Tage
-            ProzessTyp.VERKAUF: 168,     # 7 Tage
-        }
     
     # ===============================
     # Unified Data Processing
@@ -104,6 +90,76 @@ class ProcessService:
             validation_result = await self._validate_business_rules(normalized_data)
             if not validation_result["valid"]:
                 raise ValueError(f"Validierung fehlgeschlagen: {validation_result['errors']}")
+            
+
+            # Prüfe auf spezielle Prozesstypen
+            prozess_typ_str = str(normalized_data.get("prozess_typ", ""))
+            
+            if prozess_typ_str == "Bearbeiterwechsel":
+                # Bearbeiterwechsel-Logik
+                neuer_bearbeiter = normalized_data.get("bearbeiter")
+                if not neuer_bearbeiter:
+                    raise ValueError("Neuer Bearbeiter erforderlich für Bearbeiterwechsel")
+                
+                result = await self.handle_bearbeiter_wechsel(
+                    fin=normalized_data["fin"],
+                    neuer_bearbeiter=neuer_bearbeiter,
+                    source=source,
+                    notizen=normalized_data.get("notizen")
+                )
+                
+                logger.info("✅ Bearbeiterwechsel erfolgreich",
+                        processing_id=processing_id,
+                        fin=normalized_data.get("fin"),
+                        neuer_bearbeiter=neuer_bearbeiter)
+                
+                return {
+                    "success": result["success"],
+                    "processing_id": processing_id,
+                    "source": source.value,
+                    "result": result,
+                    "timestamp": datetime.now().isoformat()
+                }
+            
+            elif prozess_typ_str == "Deadlinewechsel":
+                # Deadline-Änderungs-Logik
+                # Deadline kann in zusatz_daten.neue_deadline oder als individuelle_deadline kommen
+                neue_deadline = None
+                
+                # Versuche aus zusatz_daten
+                if normalized_data.get("zusatz_daten") and normalized_data["zusatz_daten"].get("neue_deadline"):
+                    neue_deadline = normalized_data["zusatz_daten"]["neue_deadline"]
+                # Oder direkt als Feld
+                elif normalized_data.get("individuelle_deadline"):
+                    neue_deadline = normalized_data["individuelle_deadline"]
+                
+                if not neue_deadline:
+                    raise ValueError("Neue Deadline erforderlich für Deadlinewechsel")
+                
+                # String zu datetime konvertieren falls nötig
+                if isinstance(neue_deadline, str):
+                    neue_deadline = datetime.fromisoformat(neue_deadline.replace('Z', '+00:00'))
+                
+                result = await self.handle_deadline_change(
+                    fin=normalized_data["fin"],
+                    neue_deadline=neue_deadline,
+                    source=source,
+                    notizen=normalized_data.get("notizen")
+                )
+                
+                logger.info("✅ Deadlinewechsel erfolgreich",
+                        processing_id=processing_id,
+                        fin=normalized_data.get("fin"),
+                        neue_deadline=neue_deadline.isoformat())
+                
+                return {
+                    "success": result["success"],
+                    "processing_id": processing_id,
+                    "source": source.value,
+                    "result": result,
+                    "timestamp": datetime.now().isoformat()
+                }
+            
             
             # 3. Fahrzeug und Prozess verarbeiten
             result = await self._process_vehicle_and_process(
@@ -183,6 +239,7 @@ class ProcessService:
             "prioritaet": webhook_data.get("prioritaet"),
             "notizen": webhook_data.get("notizen", "Automatisch von Zapier verarbeitet"),
             "zusatz_daten": {
+                **webhook_data.get("zusatz_daten", {}),  # Original zusatz_daten ZUERST!
                 "zapier_timestamp": webhook_data.get("timestamp"),
                 "zapier_trigger": webhook_data.get("trigger_type"),
                 "original_payload": webhook_data
@@ -265,7 +322,7 @@ class ProcessService:
             try:
                 normalized["prozess_typ"] = ProzessTyp(prozess_normalized)
             except ValueError:
-                normalized["prozess_typ"] = prozess_raw  # Fallback
+                normalized["prozess_typ"] = prozess_normalized  # Fallback
         
         # Bearbeiter mit zentralen Mappings normalisieren
         bearbeiter_raw = data.get("bearbeiter") or data.get("bearbeiter_name")
@@ -341,9 +398,15 @@ class ProcessService:
             errors.append("FIN muss 17 Zeichen haben")
         
         # Prozesstyp MUSS gültig sein
-        if data.get("prozess_typ"):
+        # Prüfe auf spezielle Prozesstypen (die keine Enum-Validierung brauchen)
+
+        prozess_typ_str = str(data.get("prozess_typ", ""))
+        if ProcessConfig.is_special_process(prozess_typ_str):
+            # Spezielle Prozesstypen - keine weitere Validierung nötig
+            pass
+        elif data.get("prozess_typ"):
+            # Normale Prozesstypen - müssen gültiges Enum sein
             if not isinstance(data["prozess_typ"], ProzessTyp):
-                # Versuche zu konvertieren
                 try:
                     ProzessTyp(data["prozess_typ"])
                 except ValueError:
@@ -475,14 +538,10 @@ class ProcessService:
                         fin=data.get("fin"))
             return {"success": False, "processing_id": processing_id, "error": str(e)}
     
-    def _calculate_sla_data(
-        self,
-        prozess_typ: ProzessTyp,
-        start_time: datetime
-    ) -> Dict[str, Any]:
+    def _calculate_sla_data(self, prozess_typ: ProzessTyp, start_time: datetime) -> Dict[str, Any]:
         """Berechnet SLA-Status für einen Prozess."""
         
-        if not prozess_typ or prozess_typ not in self.sla_hours:
+        if not prozess_typ:
             return {
                 "sla_hours": None,
                 "sla_deadline": None,
@@ -490,7 +549,9 @@ class ProcessService:
                 "is_critical": False
             }
         
-        sla_hours = self.sla_hours[prozess_typ]
+        # Nutze zentrale Config
+        sla_hours = ProcessConfig.get_sla_hours(prozess_typ.value)
+        
         deadline = start_time + timedelta(hours=sla_hours)
         hours_remaining = (deadline - datetime.now()).total_seconds() / 3600
         
@@ -499,7 +560,7 @@ class ProcessService:
             "sla_deadline": deadline.isoformat(),
             "hours_remaining": round(hours_remaining, 1),
             "is_critical": hours_remaining <= 0,
-            "is_warning": 0 < hours_remaining <= (sla_hours * 0.2)  # 20% der SLA-Zeit
+            "is_warning": 0 < hours_remaining <= (sla_hours * 0.2)
         }
     
     async def _parse_email_content(
@@ -535,7 +596,8 @@ class ProcessService:
             'werkstatt': ['werkstatt', 'reparatur', 'service', 'inspektion'],
             'aufbereitung': ['aufbereitung', 'gwa', 'reinigung', 'politur'],
             'anlieferung': ['anlieferung', 'angekommen', 'eingetroffen'],
-            'einkauf': ['einkauf', 'angekauft', 'erworben', 'gekauft']
+            'einkauf': ['einkauf', 'angekauft', 'erworben', 'gekauft'],
+            'gewährleistung': ['gewährleistung', 'garantie', 'reklamation', 'mangel', 'defekt']
         }
         
         detected_prozess = 'aufbereitung'  # Default
@@ -583,6 +645,244 @@ class ProcessService:
         
         return extracted_data
     
+    # ===============================
+    # Bearbeiterwechsel-Funktionalität
+    # ===============================
+    
+    
+    async def handle_bearbeiter_wechsel(
+        self,
+        fin: str,
+        neuer_bearbeiter: str,
+        source: ProcessingSource,
+        notizen: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Zentrale Methode für Bearbeiterwechsel.
+        Übernimmt Status und Deadline vom vorherigen Prozess.
+        """
+        try:
+            self.logger.info("🔄 Bearbeiterwechsel-Anfrage",
+                            fin=fin,
+                            neuer_bearbeiter=neuer_bearbeiter,
+                            source=source.value)
+            
+            # 1. Prüfe ob Fahrzeug existiert
+            vehicle = await self.vehicle_service.get_vehicle_details(fin)
+            if not vehicle:
+                self.logger.warning("⚠️ Fahrzeug nicht gefunden für Bearbeiterwechsel",
+                                fin=fin)
+                return {
+                    "success": False,
+                    "error": "Fahrzeug nicht gefunden",
+                    "fin": fin
+                }
+            
+            # 2. Finde aktiven Prozess
+            active_process = await self._get_active_process(fin)
+            if not active_process:
+                self.logger.warning("⚠️ Kein aktiver Prozess für Bearbeiterwechsel",
+                                fin=fin)
+                return {
+                    "success": False,
+                    "error": "Kein aktiver Prozess gefunden",
+                    "fin": fin
+                }
+            
+            # 3. Erstelle neuen Prozess mit Daten vom alten
+            from src.models.integration import FahrzeugProzessCreate
+            
+            # Bereite Prozessdaten vor
+            prozess_dict = {
+                "fin": fin,
+                "prozess_typ": active_process['prozess_typ'],
+                "status": active_process.get('status', 'AKTIV'),  # Status übernehmen
+                "bearbeiter": self.mappings.normalize_bearbeiter(neuer_bearbeiter),
+                "datenquelle": self._get_datenquelle(source),
+                "notizen": notizen or f"Bearbeiterwechsel von {active_process.get('bearbeiter')} zu {neuer_bearbeiter}"
+            }
+            
+            # Deadline übernehmen wenn vorhanden
+            if active_process.get('individuelle_deadline_gesetzt'):
+                prozess_dict['individuelle_deadline'] = active_process.get('individuelle_deadline')
+                self.logger.info("📅 Individuelle Deadline wird übernommen",
+                            deadline=active_process.get('individuelle_deadline'))
+            
+            prozess_data = FahrzeugProzessCreate(**prozess_dict)
+            
+            # Der create_vehicle_process beendet automatisch alte Prozesse
+            result = await self.vehicle_service.create_vehicle_process(
+                fin=fin,
+                prozess_data=prozess_data
+            )
+            
+            self.logger.info("✅ Bearbeiterwechsel erfolgreich",
+                            fin=fin,
+                            alter_bearbeiter=active_process.get('bearbeiter'),
+                            neuer_bearbeiter=neuer_bearbeiter,
+                            prozess_id=result.prozess_id,
+                            status_beibehalten=active_process.get('status'))
+            
+            return {
+                "success": True,
+                "fin": fin,
+                "prozess_id": result.prozess_id,
+                "alter_bearbeiter": active_process.get('bearbeiter'),
+                "neuer_bearbeiter": neuer_bearbeiter,
+                "prozess_typ": str(active_process['prozess_typ']),
+                "status": active_process.get('status'),
+                "deadline_uebernommen": active_process.get('individuelle_deadline_gesetzt', False)
+            }
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler bei Bearbeiterwechsel",
+                            fin=fin,
+                            error=str(e),
+                            exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "fin": fin
+            }
+
+    async def handle_deadline_change(
+        self,
+        fin: str,
+        neue_deadline: datetime,
+        source: ProcessingSource,
+        notizen: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Ändert die Deadline eines aktiven Prozesses.
+        Erstellt einen neuen Prozess-Eintrag mit aktualisierter Deadline.
+        """
+        try:
+            self.logger.info("📅 Deadline-Änderung angefordert",
+                            fin=fin,
+                            neue_deadline=neue_deadline.isoformat(),
+                            source=source.value)
+            
+            # 1. Prüfe ob Fahrzeug existiert
+            vehicle = await self.vehicle_service.get_vehicle_details(fin)
+            if not vehicle:
+                return {
+                    "success": False,
+                    "error": "Fahrzeug nicht gefunden",
+                    "fin": fin
+                }
+            
+            # 2. Finde aktiven Prozess
+            active_process = await self._get_active_process(fin)
+            if not active_process:
+                return {
+                    "success": False,
+                    "error": "Kein aktiver Prozess gefunden",
+                    "fin": fin
+                }
+            
+            # 3. Berechne Tage bis neue Deadline
+            tage_bis_deadline = (neue_deadline.date() - datetime.now().date()).days
+            
+            # 4. Erstelle neuen Prozess mit neuer Deadline
+            from src.models.integration import FahrzeugProzessCreate
+            
+            alte_deadline = active_process.get('individuelle_deadline') or active_process.get('sla_deadline_datum')
+            
+            prozess_data = FahrzeugProzessCreate(
+                fin=fin,
+                prozess_typ=active_process['prozess_typ'],
+                status=active_process.get('status', 'AKTIV'),
+                bearbeiter=active_process.get('bearbeiter'),
+                individuelle_deadline=neue_deadline,  # Neue Deadline setzen
+                datenquelle=self._get_datenquelle(source),
+                notizen=notizen or f"Deadline geändert von {alte_deadline} auf {neue_deadline.date()}"
+            )
+            
+            # Der create_vehicle_process beendet automatisch alte Prozesse
+            result = await self.vehicle_service.create_vehicle_process(
+                fin=fin,
+                prozess_data=prozess_data
+            )
+            
+            self.logger.info("✅ Deadline erfolgreich geändert",
+                            fin=fin,
+                            alte_deadline=alte_deadline,
+                            neue_deadline=neue_deadline.date(),
+                            tage_bis_deadline=tage_bis_deadline,
+                            prozess_id=result.prozess_id)
+            
+            return {
+                "success": True,
+                "fin": fin,
+                "prozess_id": result.prozess_id,
+                "alte_deadline": str(alte_deadline) if alte_deadline else None,
+                "neue_deadline": neue_deadline.isoformat(),
+                "tage_bis_deadline": tage_bis_deadline,
+                "ist_kritisch": tage_bis_deadline <= 1
+            }
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler bei Deadline-Änderung",
+                            fin=fin,
+                            error=str(e),
+                            exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "fin": fin
+            }
+    
+
+    async def _get_active_process(self, fin: str) -> Optional[Dict[str, Any]]:
+        """
+        Findet den aktiven Prozess eines Fahrzeugs mit allen relevanten Feldern.
+        Bei mehreren aktiven Prozessen wird der neueste genommen.
+        """
+        query = f"""
+        SELECT 
+            prozess_id,
+            prozess_typ,
+            status,
+            bearbeiter,
+            start_timestamp,
+            erstellt_am,
+            sla_deadline_datum,
+            individuelle_deadline,
+            individuelle_deadline_gesetzt,
+            sla_tage,
+            notizen
+        FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
+        WHERE fin = '{fin}'
+        AND ende_timestamp IS NULL
+        AND status NOT IN ('BEENDET', 'VERKAUFT')
+        ORDER BY erstellt_am DESC
+        LIMIT 1
+        """
+        
+        result = await self.bigquery_service.execute_query(query)
+        return result[0] if result else None
+
+    def _get_datenquelle(self, source: ProcessingSource):
+        """
+        Mappt ProcessingSource zu Datenquelle Enum.
+        
+        Args:
+            source: ProcessingSource Enum
+            
+        Returns:
+            Datenquelle Enum für BigQuery
+        """
+        from src.models.integration import Datenquelle
+        
+        mapping = {
+            ProcessingSource.ZAPIER: Datenquelle.ZAPIER,
+            ProcessingSource.EMAIL: Datenquelle.EMAIL,
+            ProcessingSource.API: Datenquelle.API,
+            ProcessingSource.FLOWERS: Datenquelle.EMAIL,
+            ProcessingSource.MANUAL: Datenquelle.MANUAL
+        }
+        return mapping.get(source, Datenquelle.API)    
+
     # ===============================
     # Health Check
     # ===============================

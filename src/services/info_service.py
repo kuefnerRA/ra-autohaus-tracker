@@ -269,7 +269,8 @@ class InfoService:
                 "foto": "Foto",
                 "verkauf": "Verkauf",
                 "einkauf": "Einkauf",
-                "anlieferung": "Anlieferung"
+                "anlieferung": "Anlieferung",
+                "Gewährleistung": "Gewährlesitung",
             },
             "bearbeiter_mapping": {
                 "Thomas K.": "Thomas Küfner",

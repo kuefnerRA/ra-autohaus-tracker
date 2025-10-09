@@ -32,6 +32,18 @@ class CentralMappings:
         "(1) aufbereitung in arbeit": "Aufbereitung",
         "(4.0) werkstattplanung": "Werkstatt",
         "aufbereitung in arbeit": "Aufbereitung",
+        # Spezielle Prozesstypen
+        "bearbeiterwechsel": "Bearbeiterwechsel",
+        "bearbeiter-wechsel": "Bearbeiterwechsel", 
+        "bearbeiter wechsel": "Bearbeiterwechsel",
+        "deadlinewechsel": "Deadlinewechsel",
+        "deadline-wechsel": "Deadlinewechsel",
+        "deadline wechsel": "Deadlinewechsel",
+        "deadline änderung": "Deadlinewechsel",
+        "deadline-änderung": "Deadlinewechsel",
+        "Gewährleistung": "Gewährleistung",
+        "Gewaehrleistung": "Gewährleistung",
+        "gewährleistung": "Gewährleistung",
     }
     
     # =====================================
@@ -47,6 +59,7 @@ class CentralMappings:
         "warteschlange": "WARTESCHLANGE",
         "fwd: gestartet": "WARTESCHLANGE",
         "fwd:  gestartet": "WARTESCHLANGE",
+        "Start": "WARTESCHLANGE",
         
         # AKTIV Varianten
         "in bearbeitung": "AKTIV",

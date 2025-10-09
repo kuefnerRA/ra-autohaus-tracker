@@ -16,6 +16,7 @@ import structlog
 
 from src.core.dependencies import get_process_service
 from src.services.process_service import ProcessService, ProcessingSource
+from src.core.process_config import ProcessConfig
 
 # Router Setup
 router = APIRouter(prefix="/process", tags=["Process Management"])
@@ -33,6 +34,7 @@ class ZapierWebhookRequest(BaseModel):
     bearbeiter_name: Optional[str] = Field(None, description="Name des Bearbeiters")
     prioritaet: Optional[str] = Field(None, description="Priorität als String (wird zu Int konvertiert)")
     notizen: Optional[str] = Field(None, description="Zusätzliche Notizen")
+    zusatz_daten: Optional[Dict[str, Any]] = Field(None, description="Zusätzliche strukturierte Daten")
     timestamp: Optional[str] = Field(None, description="Zapier-Timestamp")
     trigger_type: Optional[str] = Field(None, description="Art des Zapier-Triggers")
 
@@ -68,6 +70,7 @@ class ProcessResponse(BaseModel):
 # ===============================
 # Zapier Integration Endpoints
 # ===============================
+
 
 @router.post(
     "/zapier/webhook",
@@ -409,9 +412,9 @@ async def process_info(
             "background_tasks": True
         },
         "mappings": {
-            "process_types": list(process_service.process_mappings.keys()),
-            "bearbeiter_mappings": list(process_service.bearbeiter_mappings.keys()),
-            "sla_hours": {str(k): v for k, v in process_service.sla_hours.items()}
+            "process_types": list(process_service.mappings.PROZESS_MAPPINGS.keys()),
+            "bearbeiter_mappings": list(process_service.mappings.BEARBEITER_MAPPINGS.keys()),
+            "sla_hours": ProcessConfig.SLA_HOURS
         },
         "endpoints": {
             "zapier_webhook": "/api/v1/process/zapier/webhook",

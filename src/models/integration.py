@@ -21,6 +21,7 @@ class ProzessTyp(str, Enum):
     FOTO = "Foto"
     WERKSTATT = "Werkstatt"
     VERKAUF = "Verkauf"
+    GEWAEHRLEISTUNG = "Gewährleistung"
 
 class Antriebsart(str, Enum):
     """Fahrzeug-Antriebsarten."""

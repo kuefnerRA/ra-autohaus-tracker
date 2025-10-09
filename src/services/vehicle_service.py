@@ -21,6 +21,8 @@ from src.models.integration import (
     FahrzeugMitProzess, ProzessTyp, KPIData, ValidationError,
     Datenquelle
 )
+from src.core.process_config import ProcessConfig
+from src.core.mappings import CentralMappings
 
 # Strukturiertes Logging
 logger = structlog.get_logger(__name__)
@@ -37,24 +39,7 @@ class VehicleService:
     - KPI-Berechnung für Fahrzeuge
     """
     
-    # Prozess-Konfiguration (SLA und Prioritäten)
-    PROZESS_CONFIG = {
-        ProzessTyp.EINKAUF: {"sla_stunden": 48, "priority_range": [1, 3]},
-        ProzessTyp.ANLIEFERUNG: {"sla_stunden": 24, "priority_range": [2, 4]},
-        ProzessTyp.AUFBEREITUNG: {"sla_stunden": 72, "priority_range": [3, 5]},
-        ProzessTyp.FOTO: {"sla_stunden": 24, "priority_range": [4, 6]},
-        ProzessTyp.WERKSTATT: {"sla_stunden": 168, "priority_range": [2, 5]},
-        ProzessTyp.VERKAUF: {"sla_stunden": 720, "priority_range": [1, 3]}
-    }
-    
-    # Bearbeiter-Mapping für Normalisierung
-    BEARBEITER_MAPPING = {
-        "Thomas K.": "Thomas Küfner",
-        "Max R.": "Maximilian Reinhardt",
-        "T. Küfner": "Thomas Küfner",
-        "M. Reinhardt": "Maximilian Reinhardt",
-    }
-    
+
     def __init__(self, bigquery_service: BigQueryService):
         """
         Initialisiert VehicleService.
@@ -909,10 +894,10 @@ class VehicleService:
         else:
             prozess_typ_enum = prozess_typ
         
-        if prozess_typ_enum not in self.PROZESS_CONFIG:
+        if prozess_typ_enum.value not in ProcessConfig.PROCESS_CONFIG:
             return prozess_data
-        
-        config = self.PROZESS_CONFIG[prozess_typ_enum]
+
+        config = ProcessConfig.PROCESS_CONFIG[prozess_typ_enum.value]
         sla_stunden = config['sla_stunden']
         
         # Standard SLA-Deadline berechnen
@@ -938,12 +923,8 @@ class VehicleService:
         if not bearbeiter:
             return None
         
-        # Exakte Übereinstimmung prüfen
-        if bearbeiter in self.BEARBEITER_MAPPING:
-            return self.BEARBEITER_MAPPING[bearbeiter]
-        
-        # Fallback: Original-Name zurückgeben
-        return bearbeiter.strip()
+        # Nutze zentrale Mappings
+        return CentralMappings.normalize_bearbeiter(bearbeiter)
     
     def _validate_fin(self, fin: str) -> bool:
         """Validiert FIN-Format (vereinfacht)."""
