@@ -9,6 +9,7 @@ load_dotenv()
 
 import logging
 import asyncio
+import uuid
 
 
 from datetime import datetime
@@ -147,6 +148,25 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Fügt jedem Request eine ID hinzu für besseres Debugging."""
+    import uuid
+    
+    # Kurze ID generieren
+    request_id = str(uuid.uuid4())[:8]
+    
+    # In Request speichern
+    request.state.request_id = request_id
+    
+    # Request ausführen
+    response = await call_next(request)
+    
+    # ID in Header
+    response.headers["X-Request-ID"] = request_id
+    
+    return response
 
 # Logger nach App-Initialisierung
 logger = get_logger(__name__)

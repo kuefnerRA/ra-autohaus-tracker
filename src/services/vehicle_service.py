@@ -10,6 +10,8 @@ from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
 import uuid
+import time
+from src.core.logging_config import LoggerMixin
 
 import structlog
 from src.services.bigquery_service import BigQueryService
@@ -57,6 +59,7 @@ class VehicleService:
         """
         Holt Fahrzeuge mit erweiterten Filteroptionen.
         """
+        start_time = time.time() 
         try:
             # Bearbeiter-Name normalisieren
             normalized_bearbeiter = self._normalize_bearbeiter_name(bearbeiter) if bearbeiter else None
@@ -85,6 +88,11 @@ class VehicleService:
                            bearbeiter=bearbeiter,
                            sla_critical=sla_critical_only)
             
+            duration_ms = (time.time() - start_time) * 1000
+            self.logger.info("⏱️ Performance",
+                        operation="get_vehicles", 
+                        duration_ms=round(duration_ms, 2),
+                        count=len(fahrzeuge))
             return fahrzeuge
             
         except Exception as e:
