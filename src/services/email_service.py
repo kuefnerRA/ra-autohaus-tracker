@@ -7,15 +7,16 @@ import re
 import imaplib
 import email
 from email.header import decode_header
-from datetime import datetime, date
-from typing import Dict, List, Optional, Any, Tuple
+from datetime import date
+from typing import Dict, Optional, Any, Tuple
 from decimal import Decimal
 import structlog
 
 from src.models.integration import (
-    FahrzeugStammCreate, FahrzeugProzessCreate, FahrzeugProzessRequest,
-    ProzessTyp, Antriebsart, Bereifungsart, Besteuerungsart, Datenquelle
+    Antriebsart, Bereifungsart, Besteuerungsart,
+    Datenquelle
 )
+from src.core.mappings import CentralMappings
 
 logger = structlog.get_logger(__name__)
 
@@ -73,34 +74,19 @@ class EmailParser:
     def __init__(self):
         self.logger = logger.bind(service="EmailParser")
     
-    def parse_subject_for_process(self, subject: str) -> Tuple[Optional[ProzessTyp], Optional[str]]:
+    def parse_subject_for_process(self, subject: str) -> Tuple[Optional[str], Optional[str]]:
         """
         Extrahiert Prozesstyp und Status aus Email-Betreff.
-        
-        Beispiel: "Einkauf abgeschlossen" -> (ProzessTyp.EINKAUF, "abgeschlossen")
+        Rückgabe als String (nicht Enum) für Flexibilität.
         """
         subject_lower = subject.lower().strip()
         
-        # Prozesstypen suchen
-        prozess_mapping = {
-            'einkauf': ProzessTyp.EINKAUF,
-            'anlieferung': ProzessTyp.ANLIEFERUNG,
-            'aufbereitung': ProzessTyp.AUFBEREITUNG,
-            'foto': ProzessTyp.FOTO,
-            'werkstatt': ProzessTyp.WERKSTATT,
-            'verkauf': ProzessTyp.VERKAUF,
-        }
-        
-        for keyword, prozess_typ in prozess_mapping.items():
+        # Nutze zentrale Mappings für Keywords
+        for keyword, prozess_typ in CentralMappings.PROZESS_MAPPINGS.items():
             if keyword in subject_lower:
-                # Status ist alles nach dem Prozesstyp
-                status = subject_lower.replace(keyword, '').strip()
-                if not status:
-                    status = "Eingegangen"
-                
-                # Status normalisieren (erster Buchstabe groß)
-                status = status.capitalize()
-                
+                # Status aus Rest des Betreffs
+                rest = subject_lower.replace(keyword, '').strip()
+                status = CentralMappings.normalize_status(rest) if rest else "WARTESCHLANGE"
                 return prozess_typ, status
         
         return None, None
@@ -264,7 +250,7 @@ class EmailService:
             vehicle_service: VehicleService Instanz für Fahrzeug-Operationen
             folder: IMAP-Ordner zum Verarbeiten
         """
-        from src.models.integration import FahrzeugStammCreate, FahrzeugProzessRequest, FahrzeugProzessCreate
+        from src.models.integration import FahrzeugStammCreate, FahrzeugProzessCreate
         
         results = {
             'processed': 0,

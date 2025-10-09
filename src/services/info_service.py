@@ -6,7 +6,7 @@ Nutzt zentrale Configs statt Daten zu duplizieren
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, Any
 
 from src.core.process_config import ProcessConfig
 from src.core.mappings import CentralMappings

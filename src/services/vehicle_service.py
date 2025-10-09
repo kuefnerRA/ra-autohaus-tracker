@@ -5,21 +5,18 @@ Reinhardt Automobile GmbH - RA Autohaus Tracker
 Geschäftslogik für Fahrzeugverwaltung mit SLA-Berechnung und Prioritäts-Management.
 """
 
-import logging
 import json
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
 import uuid
-import asyncio
 
 import structlog
 from src.services.bigquery_service import BigQueryService
 from src.models.integration import (
-    FahrzeugStammCreate, FahrzeugStammResponse,
-    FahrzeugProzessCreate, FahrzeugProzessResponse, FahrzeugProzessRequest,
-    FahrzeugMitProzess, ProzessTyp, KPIData, ValidationError,
-    Datenquelle
+    FahrzeugStammCreate, FahrzeugProzessCreate,
+    FahrzeugProzessResponse, FahrzeugProzessRequest, FahrzeugMitProzess,
+    ProzessTyp, KPIData, ValidationError
 )
 from src.core.process_config import ProcessConfig
 from src.core.mappings import CentralMappings
@@ -527,7 +524,7 @@ class VehicleService:
                     """
                     
                     try:
-                        result = await self.bigquery_service.execute_query(update_query)
+                        await self.bigquery_service.execute_query(update_query)
                         self.logger.info("✅ Prozess direkt beendet", 
                                     prozess_id=prozess_id,
                                     age_minutes=age_minutes)
@@ -837,7 +834,7 @@ class VehicleService:
         """
         
         # Kopiere das Original-Dict, um keine Felder zu verlieren!
-        result = prozess_data.copy()  
+        prozess_data.copy()  
 
         # DEBUG
         self.logger.info("🔍 DEBUG - _calculate_sla_data Start",

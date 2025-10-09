@@ -5,9 +5,8 @@ Transformiert Rohdaten in Pydantic-kompatible Formate
 
 import re
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from decimal import Decimal
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +113,7 @@ class DataTransformer:
                     # Entferne Tausender-Punkte falls vorhanden
                     value = str(data[field]).replace('.', '')
                     result[field] = int(value)
-                except (ValueError, TypeError) as e:
+                except (ValueError, TypeError):
                     logger.warning(f"Konnte {field} nicht zu Integer konvertieren: {data[field]}")
         
         return result
@@ -216,7 +215,7 @@ class DataTransformer:
                     try:
                         # Hier könnten weitere Datumsformate behandelt werden
                         result[field] = value
-                    except Exception as e:
+                    except Exception:
                         logger.warning(f"Konnte Datum {field} nicht parsen: {value}")
         
         return result

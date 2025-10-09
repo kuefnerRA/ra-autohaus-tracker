@@ -11,16 +11,16 @@ Unified Data Processing für alle Eingangswege:
 """
 
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Union, TYPE_CHECKING
+from typing import Dict, Any, Optional
 from enum import Enum
-import re
 import structlog
 from decimal import Decimal
 
 from src.services.bigquery_service import BigQueryService
 from src.services.vehicle_service import VehicleService
+from src.services.email_service import EmailParser
+
 from src.models.integration import (
-    FahrzeugStammCreate, FahrzeugProzessCreate, 
     ProzessTyp, Datenquelle
 )
 from src.core.mappings import CentralMappings
@@ -53,7 +53,8 @@ class ProcessService:
         self.bigquery_service = bigquery_service
         self.logger = logger
         self.mappings = CentralMappings
-    
+        self.email_parser = EmailParser()  
+        
     # ===============================
     # Unified Data Processing
     # ===============================
@@ -570,81 +571,47 @@ class ProcessService:
         sender: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Parst E-Mail-Inhalte mit zentralen Mappings.
+        Delegiert Email-Parsing an zentralen EmailParser.
         """
-        
-        # FIN-Pattern (17 alphanumerische Zeichen)
-        fin_pattern = r'\b[A-Z0-9]{16,17}'
-
-        # WICHTIG: Suche FIN in BEIDEN - Subject UND Content
-        combined_text = f"{subject} {content}".upper()
-        fin_matches = re.findall(fin_pattern, combined_text)
-
-        # Filtere potenzielle Duplikate
-        unique_fins = list(set(fin_matches))
-        
-        if not fin_matches:
+        try:
+            # Nutze den zentralen EmailParser
+            fahrzeug_dict, prozess_dict = self.email_parser.parse_email_content(
+                subject=subject,
+                body=content
+            )
+            
+            if not fahrzeug_dict:
+                self.logger.warning("⚠️ Keine Fahrzeugdaten in Email gefunden")
+                return None
+            
+            # Konvertiere zu ProcessService Format
+            result = {
+                "fin": fahrzeug_dict.get("fin"),
+                "prozess_typ": prozess_dict.get("prozess_typ") if prozess_dict else "Aufbereitung",
+                "status": prozess_dict.get("status") if prozess_dict else "WARTESCHLANGE",
+                "bearbeiter": prozess_dict.get("bearbeiter") if prozess_dict else sender.split('@')[0].replace('.', ' ').title(),
+                "notizen": f"Email von {sender}: {subject}",
+                "zusatz_daten": {
+                    "email_sender": sender,
+                    "email_subject": subject,
+                    "fahrzeug_daten": fahrzeug_dict,
+                    "prozess_daten": prozess_dict
+                }
+            }
+            
+            self.logger.info("📧 Email über EmailParser geparst",
+                            fin=result["fin"],
+                            prozess=result["prozess_typ"],
+                            status=result["status"])
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error("❌ Fehler beim Email-Parsing", 
+                            sender=sender,
+                            error=str(e))
             return None
         
-        # Kombiniere Subject und Content für Analyse
-        full_text = f"{subject} {content}"
-        
-        # Keywords für Prozesstyp-Erkennung
-        prozess_keywords = {
-            'verkauf': ['verkauf', 'verkaufsbereit', 'verkäufer', 'vk'],
-            'foto': ['foto', 'fotografiert', 'bilder', 'fotos'],
-            'werkstatt': ['werkstatt', 'reparatur', 'service', 'inspektion'],
-            'aufbereitung': ['aufbereitung', 'gwa', 'reinigung', 'politur'],
-            'anlieferung': ['anlieferung', 'angekommen', 'eingetroffen'],
-            'einkauf': ['einkauf', 'angekauft', 'erworben', 'gekauft'],
-            'gewährleistung': ['gewährleistung', 'garantie', 'reklamation', 'mangel', 'defekt']
-        }
-        
-        detected_prozess = 'aufbereitung'  # Default
-        for prozess_typ, keywords in prozess_keywords.items():
-            if any(keyword in full_text.lower() for keyword in keywords):
-                detected_prozess = prozess_typ
-                break
-        
-        # Keywords für Status-Erkennung
-        status_keywords = {
-            'beendet': ['fertig', 'abgeschlossen', 'beendet', 'erledigt'],
-            'aktiv': ['läuft', 'in bearbeitung', 'aktiv', 'arbeite'],
-            'warteschlange': ['wartet', 'wartend', 'bereit für', 'angemeldet']
-        }
-        
-        detected_status = 'warteschlange'  # Default
-        for status, keywords in status_keywords.items():
-            if any(keyword in full_text.lower() for keyword in keywords):
-                detected_status = status
-                break
-        
-        # Bearbeiter aus Sender extrahieren
-        bearbeiter_raw = sender.split('@')[0].replace('.', ' ').title() if '@' in sender else 'System'
-        
-        extracted_data = {
-            "fin": fin_matches[0],
-            "prozess_typ": detected_prozess,
-            "status": detected_status,
-            "bearbeiter": bearbeiter_raw,
-            "notizen": f"Email von {sender}: {subject}",
-            "zusatz_daten": {
-                "email_sender": sender,
-                "email_subject": subject,
-                "detected_prozess": detected_prozess,
-                "detected_status": detected_status,
-                "fin_found_in": "subject" if fin_matches[0] in subject.upper() else "content"
-            }
-        }
-        
-        self.logger.info("📧 Email geparst",
-                        fin=fin_matches[0],
-                        fin_source="subject" if fin_matches[0] in subject.upper() else "content",
-                        prozess=detected_prozess,
-                        status=detected_status)
-        
-        return extracted_data
-    
     # ===============================
     # Bearbeiterwechsel-Funktionalität
     # ===============================

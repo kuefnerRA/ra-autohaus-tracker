@@ -3,8 +3,7 @@ Zentrale Prozesskonfiguration für RA Autohaus Tracker
 Alle prozessbezogenen Einstellungen an einem Ort
 """
 
-from enum import Enum
-from typing import Dict, List
+from typing import List
 
 class ProcessConfig:
     """Zentrale Konfiguration für alle Prozesstypen"""

@@ -6,7 +6,6 @@ Zentrale Verarbeitung für alle Datenquellen (Zapier, Flowers, Direct)
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
-import uuid
 
 from src.core.mappings import CentralMappings
 from src.services.process_service import ProcessService
@@ -39,11 +38,11 @@ class UnifiedHandler:
             
             # Erstelle oder aktualisiere Fahrzeug
             if normalized.get("fin"):
-                vehicle = await self._ensure_vehicle_exists(normalized)
+                await self._ensure_vehicle_exists(normalized)
                 
                 # Erstelle Prozess wenn Status vorhanden
                 if normalized.get("status"):
-                    process = await self._create_or_update_process(normalized)
+                    await self._create_or_update_process(normalized)
                     
             return {
                 "success": True,

@@ -6,9 +6,8 @@ Umgeht das BigQuery Streaming Buffer Problem
 
 import asyncio
 import logging
-import json
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from datetime import datetime
+from typing import List, Dict, Any
 from google.cloud import bigquery
 from google.cloud.exceptions import BadRequest
 

@@ -290,8 +290,8 @@ async def startup_services():
         logger.info("📋 Environment-Konfiguration", **config)
         
         # Core Services initialisieren
-        bigquery_service = get_bigquery_service()
-        vehicle_service = get_vehicle_service()
+        get_bigquery_service()
+        get_vehicle_service()
         
         # Health Check durchführen
         health = await check_all_services_health()

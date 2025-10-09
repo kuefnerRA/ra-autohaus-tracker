@@ -5,8 +5,7 @@ Verarbeitet Emails von Flowers und extrahiert strukturierte Daten
 
 import logging
 import re
-from typing import Dict, Any, Optional
-from datetime import datetime
+from typing import Dict, Any
 from src.core.mappings import CentralMappings
 from src.handlers.unified_handler import UnifiedHandler
 
