@@ -17,6 +17,7 @@ import structlog
 from src.core.dependencies import get_process_service
 from src.services.process_service import ProcessService, ProcessingSource
 from src.core.process_config import ProcessConfig
+from src.core.dependencies import get_cleanup_job
 
 # Router Setup
 router = APIRouter(prefix="/process", tags=["Process Management"])
@@ -424,6 +425,32 @@ async def process_info(
         },
         "timestamp": datetime.now().isoformat()
     }
+
+@router.post(
+    "/cleanup/run",
+    summary="Manueller Cleanup",
+    description="Führt einmalig den Prozess-Cleanup durch."
+)
+
+async def run_manual_cleanup(background_tasks: BackgroundTasks):
+    """Führt den Cleanup-Job manuell aus."""
+    cleanup_job = get_cleanup_job()
+    if not cleanup_job:  # None-Check
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cleanup-Job nicht verfügbar (Mock-Modus aktiv)"
+        )
+    
+    # Im Hintergrund ausführen
+    background_tasks.add_task(cleanup_job.run_cleanup)
+    
+    return {
+        "status": "started",
+        "message": "Cleanup-Job wurde gestartet",
+        "mode": "manual",
+        "timestamp": datetime.now().isoformat()
+    }
+
 
 # ===============================
 # Background Tasks

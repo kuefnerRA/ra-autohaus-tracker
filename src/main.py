@@ -18,6 +18,9 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+
+
+
 import structlog
 from structlog import configure, get_logger
 from structlog.processors import JSONRenderer, TimeStamper
@@ -41,6 +44,8 @@ from src.api.routes.info import router as info_router
 from src.api.routes.integration import router as integration_router
 from src.api.routes.email import router as email_router
 from src.services.process_cleanup_service import ProcessCleanupJob
+from src.core.background_tasks import background_manager
+import asyncio
 
 load_dotenv()
 
@@ -233,6 +238,24 @@ async def log_requests(request: Request, call_next):
                duration_seconds=round(duration, 3))
     
     return response
+
+@app.on_event("startup")
+async def startup_event():
+    """Application Startup"""
+    await startup_services()
+    
+    # Cleanup-Job im Hintergrund starten (nur in Production)
+    if os.getenv('ENVIRONMENT') == 'production':
+        asyncio.create_task(
+            background_manager.start_cleanup_job(interval_minutes=10)
+        )
+        logger.info("🔄 Background Cleanup-Job gestartet")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Application Shutdown"""
+    await background_manager.stop_cleanup_job()
+    await shutdown_services()
 
 # Router Registration
 app.include_router(vehicles_router, prefix="/api/v1")

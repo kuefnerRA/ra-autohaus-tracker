@@ -15,6 +15,10 @@ from src.services.vehicle_service import VehicleService
 from src.services.process_service import ProcessService
 from src.services.dashboard_service import DashboardService
 from src.services.info_service import InfoService
+from src.services.process_cleanup_service import ProcessCleanupJob
+from src.handlers.unified_handler import UnifiedHandler
+from src.handlers.zapier_handler import ZapierHandler  
+from src.handlers.flowers_handler import FlowersHandler
 
 # Strukturiertes Logging
 logger = structlog.get_logger(__name__)
@@ -25,6 +29,10 @@ _vehicle_service: Optional[VehicleService] = None
 _process_service: Optional[ProcessService] = None
 _dashboard_service: Optional[DashboardService] = None
 _info_service: Optional[InfoService] = None
+_cleanup_job: Optional[ProcessCleanupJob] = None
+_unified_handler: Optional[UnifiedHandler] = None
+_zapier_handler: Optional[ZapierHandler] = None
+_flowers_handler: Optional[FlowersHandler] = None
 
 @lru_cache()
 def get_bigquery_service() -> BigQueryService:
@@ -122,6 +130,79 @@ def get_dashboard_service() -> DashboardService:
         _dashboard_service = DashboardService(bigquery_service)
         logger.info("✅ DashboardService initialisiert (Singleton)")
     return _dashboard_service
+
+from typing import Optional, cast
+
+@lru_cache()
+def get_cleanup_job() -> Optional[ProcessCleanupJob]:  # Optional Return Type
+    """
+    Singleton ProcessCleanupJob mit BigQuery-Dependency
+    
+    Returns:
+        ProcessCleanupJob Instanz für Background-Cleanup oder None im Mock-Modus
+    """
+    global _cleanup_job
+    if _cleanup_job is None:
+        bigquery_service = get_bigquery_service()
+        
+        # Prüfe ob BigQuery im echten Modus läuft
+        if not bigquery_service.use_mock and bigquery_service.client and bigquery_service.dataset_ref:
+            _cleanup_job = ProcessCleanupJob(
+                bigquery_client=bigquery_service.client,
+                dataset_id=cast(str, bigquery_service.dataset_ref)  # Type Cast, da wir geprüft haben
+            )
+            logger.info("✅ ProcessCleanupJob initialisiert (Singleton)")
+        else:
+            logger.warning("⚠️ ProcessCleanupJob nicht verfügbar - BigQuery Mock-Modus oder keine Verbindung")
+            return None  # Explizit None zurückgeben
+            
+    return _cleanup_job
+
+@lru_cache()
+def get_unified_handler() -> UnifiedHandler:
+    """
+    Singleton UnifiedHandler für einheitliche Datenverarbeitung
+    
+    Returns:
+        UnifiedHandler Instanz
+    """
+    global _unified_handler
+    if _unified_handler is None:
+        process_service = get_process_service()
+        vehicle_service = get_vehicle_service()
+        _unified_handler = UnifiedHandler(process_service, vehicle_service)
+        logger.info("✅ UnifiedHandler initialisiert (Singleton)")
+    return _unified_handler
+
+@lru_cache()
+def get_zapier_handler() -> ZapierHandler:
+    """
+    Singleton ZapierHandler für Zapier-Integration
+    
+    Returns:
+        ZapierHandler Instanz
+    """
+    global _zapier_handler
+    if _zapier_handler is None:
+        unified_handler = get_unified_handler()
+        _zapier_handler = ZapierHandler(unified_handler)
+        logger.info("✅ ZapierHandler initialisiert (Singleton)")
+    return _zapier_handler
+
+@lru_cache()
+def get_flowers_handler() -> FlowersHandler:
+    """
+    Singleton FlowersHandler für Flowers-Integration
+    
+    Returns:
+        FlowersHandler Instanz
+    """
+    global _flowers_handler
+    if _flowers_handler is None:
+        unified_handler = get_unified_handler()
+        _flowers_handler = FlowersHandler(unified_handler)
+        logger.info("✅ FlowersHandler initialisiert (Singleton)")
+    return _flowers_handler
 
 @lru_cache()
 def get_info_service() -> InfoService:
@@ -246,13 +327,19 @@ def reset_services():
     """
     Reset alle Service-Instanzen (für Testing)
     """
-    global _bigquery_service, _vehicle_service, _process_service, _dashboard_service, _info_service
+    global _bigquery_service, _vehicle_service, _process_service, \
+            _dashboard_service, _info_service, _cleanup_job, \
+            _unified_handler, _zapier_handler, _flowers_handler
     
     _bigquery_service = None
     _vehicle_service = None
     _process_service = None
     _dashboard_service = None
     _info_service = None
+    _cleanup_job = None
+    _unified_handler = None
+    _zapier_handler = None
+    _flowers_handler = None
     
     # Clear LRU caches
     get_bigquery_service.cache_clear()
@@ -260,6 +347,10 @@ def reset_services():
     get_process_service.cache_clear()
     get_dashboard_service.cache_clear()
     get_info_service.cache_clear()
+    get_cleanup_job.cache_clear()
+    get_unified_handler.cache_clear()
+    get_zapier_handler.cache_clear()
+    get_flowers_handler.cache_clear()
     
 
 def get_service_info() -> dict:
