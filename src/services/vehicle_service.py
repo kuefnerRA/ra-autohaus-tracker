@@ -489,19 +489,15 @@ class VehicleService:
         try:
             # Alle offenen Prozesse des Fahrzeugs finden
             find_query = f"""
-            SELECT 
-                prozess_id, 
-                prozess_typ, 
-                start_timestamp, 
-                erstellt_am,
-                DATETIME_DIFF(CURRENT_DATETIME(), erstellt_am, MINUTE) as age_minutes
+            SELECT ... 
             FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
-            WHERE fin = '{fin}'
+            WHERE fin = @fin
             AND ende_timestamp IS NULL
-            AND status NOT IN ('BEENDET', 'VERKAUFT')
             """
-            
-            open_processes = await self.bigquery_service.execute_query(find_query)
+
+            # Und dann die Query mit Parametern ausführen:
+            params = [bigquery.ScalarQueryParameter("fin", "STRING", fin)]
+            open_processes = await self.bigquery_service.execute_query(find_query, params)
             
             if not open_processes:
                 self.logger.debug("Keine offenen Prozesse zum Beenden gefunden", fin=fin)

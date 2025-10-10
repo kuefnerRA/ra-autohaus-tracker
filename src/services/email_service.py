@@ -27,7 +27,7 @@ class EmailParser:
     
     # Regex-Patterns für deutsche Formate
     PATTERNS = {
-        'fin': r'FIN[:\s]+([A-Z0-9]{17})',
+        'fin': r'(?:FIN|Referenz)[:\s]+([A-Z0-9]{17})',
         'marke': r'Marke[:\s]+(.+?)(?:\n|$)',
         'modell': r'Modell[:\s]+(.+?)(?:\n|$)',
         'datum_erstzulassung': r'Datum Erstzulassung[:\s]+(\d{1,2}\.\d{1,2}\.\d{4})',
@@ -39,7 +39,7 @@ class EmailParser:
         'anzahl_vorhalter': r'Anzahl Vorhalter[:\s]+(\d+)',
         'ek_netto': r'EK netto[:\s]+([\d\.,]+)',
         'besteuerungsart': r'Besteuerungsart[:\s]+(.+?)(?:\n|$)',
-        'bearbeiter': r'Bearbeiter[:\s]+(.+?)(?:\n|$)',
+        'bearbeiter': r'^Bearbeiter[:\s]+(.+?)(?:\n|$)',
         'farbe': r'Farbe[:\s]+(.+?)(?:\n|$)',
         'baujahr': r'Baujahr[:\s]+(\d{4})',
     }
@@ -81,6 +81,9 @@ class EmailParser:
         """
         subject_lower = subject.lower().strip()
         
+        if "änderung bearbeiter" in subject_lower:
+            return "Bearbeiterwechsel", "AKTIV"
+    
         # Nutze zentrale Mappings für Keywords
         for keyword, prozess_typ in CentralMappings.PROZESS_MAPPINGS.items():
             if keyword in subject_lower:
@@ -103,6 +106,11 @@ class EmailParser:
 
             # Text normalisieren
             body = body.replace('\r\n', '\n').replace('\r', '\n')
+
+            # NEU: Body von Signaturen und Trennlinien bereinigen
+            body = re.sub(r'[-]{10,}.*', '', body, flags=re.DOTALL)  # Entfernt alles nach ----------
+            body = re.sub(r'Sent via.*', '', body, flags=re.DOTALL)  # Entfernt "Sent via" Signaturen
+
             
             # FIN extrahieren (Pflichtfeld)
             fin_match = re.search(self.PATTERNS['fin'], f"{subject}\n{body}", re.IGNORECASE)
