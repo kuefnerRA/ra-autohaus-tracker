@@ -149,27 +149,57 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# ERSETZEN Sie die Zeilen 115-128 und 208-231 in main.py mit EINER konsolidierten Middleware:
+
 @app.middleware("http")
-async def add_request_id(request: Request, call_next):
-    """Fügt jedem Request eine ID hinzu für besseres Debugging."""
+async def combined_request_middleware(request: Request, call_next):
+    """Kombinierte Request-ID, Logging und Performance Middleware."""
     import uuid
+    from datetime import datetime
+
+    logger = get_logger(__name__) 
     
-    # Kurze ID generieren
+    # Request-ID generieren und zuweisen
     request_id = str(uuid.uuid4())[:8]
-    
-    # In Request speichern
     request.state.request_id = request_id
     
-    # Request ausführen
-    response = await call_next(request)
+    # Request-Logging (nur bei DEBUG)
+    if os.getenv('LOG_LEVEL', 'INFO').upper() == 'DEBUG':
+        logger.debug("📥 HTTP Request", 
+                    request_id=request_id,
+                    method=request.method,
+                    path=str(request.url.path),
+                    query=str(request.url.query) if request.url.query else None)
     
-    # ID in Header
+    # Request ausführen mit Timing
+    start_time = datetime.now()
+    
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.error("💥 Request fehlgeschlagen",
+                    request_id=request_id,
+                    method=request.method,
+                    path=str(request.url.path),
+                    duration_seconds=round(duration, 3),
+                    error=str(e))
+        raise
+    
+    duration = (datetime.now() - start_time).total_seconds()
+    
+    # Response-Header setzen
     response.headers["X-Request-ID"] = request_id
     
+    # Response-Logging
+    logger.info("📤 HTTP Response",
+                request_id=request_id,
+                method=request.method,
+                path=str(request.url.path),
+                status_code=response.status_code,
+                duration_seconds=round(duration, 3))
+    
     return response
-
-# Logger nach App-Initialisierung
-logger = get_logger(__name__)
 
 # Middleware Configuration
 def setup_middleware():
@@ -196,9 +226,7 @@ def setup_middleware():
     
     # GZip Compression für bessere Performance
     app.add_middleware(GZipMiddleware, minimum_size=1000)
-    
-    logger.info("🔧 Middleware erfolgreich konfiguriert", 
-               environment=os.getenv('ENVIRONMENT', 'development'))
+    print(f"🔧 Middleware erfolgreich konfiguriert für {os.getenv('ENVIRONMENT', 'development')}") 
 
 setup_middleware()
 
@@ -208,6 +236,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     """
     Globaler Exception Handler für unbehandelte Fehler.
     """
+    logger = get_logger(__name__) 
+    
     logger.error("💥 Unbehandelter Fehler", 
                 error=str(exc),
                 path=str(request.url),
@@ -231,33 +261,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
-# Request Logging Middleware  
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """
-    Loggt alle HTTP-Requests strukturiert.
-    """
-    start_time = datetime.now()
-    
-    # Request loggen (nur bei DEBUG Level)
-    if os.getenv('LOG_LEVEL', 'INFO').upper() == 'DEBUG':
-        logger.debug("📥 HTTP Request", 
-                   method=request.method,
-                   path=str(request.url.path),
-                   query=str(request.url.query) if request.url.query else None)
-    
-    response = await call_next(request)
-    
-    # Response loggen
-    duration = (datetime.now() - start_time).total_seconds()
-    
-    logger.info("📤 HTTP Response",
-               method=request.method,
-               path=str(request.url.path),
-               status_code=response.status_code,
-               duration_seconds=round(duration, 3))
-    
-    return response
 
 @app.on_event("startup")
 async def startup_event():

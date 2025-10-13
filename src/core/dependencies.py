@@ -19,6 +19,8 @@ from src.services.process_cleanup_service import ProcessCleanupJob
 from src.handlers.unified_handler import UnifiedHandler
 from src.handlers.zapier_handler import ZapierHandler  
 from src.handlers.flowers_handler import FlowersHandler
+from fastapi import Request
+from typing import Optional
 
 # Strukturiertes Logging
 logger = structlog.get_logger(__name__)
@@ -92,7 +94,7 @@ def get_vehicle_service() -> VehicleService:
 @lru_cache()
 def get_process_service() -> ProcessService:
     """
-    Singleton Process Service mit Dependencies.
+    Singleton Process Service mit Request-ID Support.
     
     Returns:
         ProcessService: Business Logic Service für Prozesse
@@ -113,6 +115,7 @@ def get_process_service() -> ProcessService:
         except Exception as e:
             logger.error("❌ Process Service Initialisierung fehlgeschlagen", error=str(e))
             raise
+    
     
     return _process_service
 

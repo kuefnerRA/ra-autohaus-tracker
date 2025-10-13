@@ -6,6 +6,7 @@ Geschäftslogik für Fahrzeugverwaltung mit SLA-Berechnung und Prioritäts-Manag
 """
 
 import json
+from google.cloud import bigquery
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
@@ -22,8 +23,9 @@ from src.models.integration import (
 )
 from src.core.process_config import ProcessConfig
 from src.core.mappings import CentralMappings
+from src.core.performance import measure_performance
 
-# Strukturiertes Logging
+# Strukturiertes Logging 
 logger = structlog.get_logger(__name__)
 
 class VehicleService:
@@ -49,6 +51,7 @@ class VehicleService:
         self.bigquery_service = bigquery_service
         self.logger = logger.bind(service="VehicleService")
     
+    @measure_performance("get_vehicles")
     async def get_vehicles(
         self,
         limit: int = 100,
@@ -59,7 +62,6 @@ class VehicleService:
         """
         Holt Fahrzeuge mit erweiterten Filteroptionen.
         """
-        start_time = time.time() 
         try:
             # Bearbeiter-Name normalisieren
             normalized_bearbeiter = self._normalize_bearbeiter_name(bearbeiter) if bearbeiter else None
@@ -83,16 +85,11 @@ class VehicleService:
                 fahrzeuge.append(fahrzeug)
             
             self.logger.info("✅ Fahrzeuge erfolgreich abgerufen", 
-                           count=len(fahrzeuge),
-                           prozess_typ=prozess_typ,
-                           bearbeiter=bearbeiter,
-                           sla_critical=sla_critical_only)
+                        count=len(fahrzeuge),
+                        prozess_typ=prozess_typ,
+                        bearbeiter=bearbeiter,
+                        sla_critical_only=sla_critical_only)
             
-            duration_ms = (time.time() - start_time) * 1000
-            self.logger.info("⏱️ Performance",
-                        operation="get_vehicles", 
-                        duration_ms=round(duration_ms, 2),
-                        count=len(fahrzeuge))
             return fahrzeuge
             
         except Exception as e:
@@ -440,9 +437,15 @@ class VehicleService:
             
             # Bearbeiter normalisieren
             if prozess_dict.get('bearbeiter'):
-                prozess_dict['bearbeiter'] = self._normalize_bearbeiter_name(
-                    prozess_dict['bearbeiter']
-                )
+                bearbeiter = prozess_dict['bearbeiter']
+                # Nur normalisieren wenn es ein Kürzel ist (kein Leerzeichen oder sehr kurz)
+                if ' ' not in bearbeiter or len(bearbeiter) <= 5:
+                    normalized = self._normalize_bearbeiter_name(bearbeiter)
+                    if normalized and normalized != bearbeiter:  # Nur überschreiben wenn geändert
+                        prozess_dict['bearbeiter'] = normalized
+                        self.logger.debug("Bearbeiter normalisiert", 
+                                        original=bearbeiter, 
+                                        normalized=normalized)
             
             # Zeitstempel setzen
             now = datetime.now()
@@ -489,15 +492,20 @@ class VehicleService:
         try:
             # Alle offenen Prozesse des Fahrzeugs finden
             find_query = f"""
-            SELECT ... 
+            SELECT 
+                prozess_id, 
+                fin, 
+                prozess_typ, 
+                status,
+                DATETIME_DIFF(CURRENT_DATETIME(), erstellt_am, MINUTE) as age_minutes
             FROM `{self.bigquery_service.dataset_ref}.fahrzeug_prozesse`
-            WHERE fin = @fin
+            WHERE fin = '{fin}'
             AND ende_timestamp IS NULL
+            AND status NOT IN ('BEENDET', 'VERKAUFT')
             """
 
-            # Und dann die Query mit Parametern ausführen:
-            params = [bigquery.ScalarQueryParameter("fin", "STRING", fin)]
-            open_processes = await self.bigquery_service.execute_query(find_query, params)
+            # Query OHNE Parameter ausführen
+            open_processes = await self.bigquery_service.execute_query(find_query)
             
             if not open_processes:
                 self.logger.debug("Keine offenen Prozesse zum Beenden gefunden", fin=fin)
@@ -578,6 +586,20 @@ class VehicleService:
             prozess_id: ID des zu beendenden Prozesses
             scheduled_for: Wann soll der Cleanup laufen (default: in 125 Minuten)
         """
+       
+        # Prüfe ob bereits ein Cleanup für diesen Prozess existiert
+        check_query = f"""
+        SELECT COUNT(*) as count
+        FROM `{self.bigquery_service.dataset_ref}.cleanup_queue`
+        WHERE prozess_id = '{prozess_id}'
+        AND processed = FALSE
+        """
+        
+        existing = await self.bigquery_service.execute_query(check_query)
+        if existing and existing[0]['count'] > 0:
+            self.logger.info("⏭️ Cleanup bereits geplant", prozess_id=prozess_id)
+            return
+       
         try:
             import uuid
             

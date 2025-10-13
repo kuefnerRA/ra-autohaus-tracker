@@ -231,6 +231,9 @@ class ProcessService:
         logger.info("📨 Zapier Webhook verarbeitung",
                    keys=list(webhook_data.keys()) if webhook_data else [])
         
+        zusatz = webhook_data.get("zusatz_daten", {}) if webhook_data.get("zusatz_daten") else {}
+
+        
         # Zapier-spezifische Feld-Mappings
         zapier_mapped = {
             "fin": webhook_data.get("fahrzeug_fin"),
@@ -239,8 +242,26 @@ class ProcessService:
             "bearbeiter": webhook_data.get("bearbeiter_name"),
             "prioritaet": webhook_data.get("prioritaet"),
             "notizen": webhook_data.get("notizen", "Automatisch von Zapier verarbeitet"),
+            
+            # Fahrzeugstammdaten aus zusatz_daten
+            "marke": zusatz.get("marke"),
+            "modell": zusatz.get("modell"),
+            "antriebsart": zusatz.get("antriebsart"),
+            "farbe": zusatz.get("farbe"),
+            "baujahr": zusatz.get("baujahr"),
+            "datum_erstzulassung": zusatz.get("datum_erstzulassung"),
+            "kw_leistung": zusatz.get("kw_leistung"),
+            "km_stand": zusatz.get("km_stand"),
+            "anzahl_fahrzeugschluessel": zusatz.get("anzahl_fahrzeugschluessel"),
+            "bereifungsart": zusatz.get("bereifungsart"),
+            "anzahl_vorhalter": zusatz.get("anzahl_vorhalter"),
+            "ek_netto": zusatz.get("ek_netto"),
+            "besteuerungsart": zusatz.get("besteuerungsart"),
+            "datenquelle_fahrzeug": zusatz.get("datenquelle_fahrzeug"),
+            
+            # Original zusatz_daten plus Zapier-Metadaten
             "zusatz_daten": {
-                **webhook_data.get("zusatz_daten", {}),  # Original zusatz_daten ZUERST!
+                **zusatz,  # Original Daten
                 "zapier_timestamp": webhook_data.get("timestamp"),
                 "zapier_trigger": webhook_data.get("trigger_type"),
                 "original_payload": webhook_data
@@ -628,11 +649,15 @@ class ProcessService:
         Zentrale Methode für Bearbeiterwechsel.
         Übernimmt Status und Deadline vom vorherigen Prozess.
         """
+
+        
         try:
             self.logger.info("🔄 Bearbeiterwechsel-Anfrage",
                             fin=fin,
                             neuer_bearbeiter=neuer_bearbeiter,
                             source=source.value)
+            
+
             
             # 1. Prüfe ob Fahrzeug existiert
             vehicle = await self.vehicle_service.get_vehicle_details(fin)
@@ -647,6 +672,8 @@ class ProcessService:
             
             # 2. Finde aktiven Prozess
             active_process = await self._get_active_process(fin)
+
+            
             if not active_process:
                 self.logger.warning("⚠️ Kein aktiver Prozess für Bearbeiterwechsel",
                                 fin=fin)
@@ -656,6 +683,8 @@ class ProcessService:
                     "fin": fin
                 }
             
+
+                            
             # 3. Erstelle neuen Prozess mit Daten vom alten
             from src.models.integration import FahrzeugProzessCreate
             

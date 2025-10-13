@@ -60,6 +60,7 @@ class CentralMappings:
         "fwd: gestartet": "WARTESCHLANGE",
         "fwd:  gestartet": "WARTESCHLANGE",
         "Start": "WARTESCHLANGE",
+        "start": "WARTESCHLANGE",
         
         # AKTIV Varianten
         "in bearbeitung": "AKTIV",

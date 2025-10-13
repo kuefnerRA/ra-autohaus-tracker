@@ -81,15 +81,23 @@ class EmailParser:
         """
         subject_lower = subject.lower().strip()
         
+        # Spezialfall: Bearbeiterwechsel
         if "änderung bearbeiter" in subject_lower:
             return "Bearbeiterwechsel", "AKTIV"
-    
+        
+        # Entferne FIN-Teil aus dem Betreff für saubere Verarbeitung
+        subject_clean = re.sub(r'fin[:\s]*[a-z0-9]{17}', '', subject_lower, flags=re.IGNORECASE).strip()
+        
         # Nutze zentrale Mappings für Keywords
         for keyword, prozess_typ in CentralMappings.PROZESS_MAPPINGS.items():
-            if keyword in subject_lower:
-                # Status aus Rest des Betreffs
-                rest = subject_lower.replace(keyword, '').strip()
-                status = CentralMappings.normalize_status(rest) if rest else "WARTESCHLANGE"
+            if keyword in subject_clean:
+                # Extrahiere NUR den Status-Teil (erstes Wort nach Prozesstyp)
+                rest = subject_clean.replace(keyword, '').strip()
+                
+                # Nimm nur das erste Wort als Status
+                status_word = rest.split()[0] if rest.split() else ""
+                status = CentralMappings.normalize_status(status_word) if status_word else "WARTESCHLANGE"
+                
                 return prozess_typ, status
         
         return None, None
