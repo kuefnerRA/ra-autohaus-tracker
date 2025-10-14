@@ -71,7 +71,7 @@ class ZapierHandler:
         # Alle Fahrzeugdaten extrahieren - OHNE Transformation!
         extracted_data = {
             # Basis - BEIDE Varianten durchreichen
-            "fin": payload.get("fin"),
+            "fin": payload.get("fahrzeug_fin") or payload.get("fin"),
             "prozess_typ": payload.get("prozess_typ"),
             "prozess_name": payload.get("prozess_name"),  # NEU: Originalname beibehalten
             "status": payload.get("status"),

@@ -340,11 +340,10 @@ class ProcessService:
         prozess_raw = data.get("prozess_typ") or data.get("prozess_name") or data.get("process_type")
         if prozess_raw:
             prozess_normalized = self.mappings.normalize_prozess_typ(prozess_raw)
-            # Zu ProzessTyp Enum konvertieren wenn möglich
             try:
                 normalized["prozess_typ"] = ProzessTyp(prozess_normalized)
             except ValueError:
-                normalized["prozess_typ"] = prozess_normalized  # Fallback
+                normalized["prozess_typ"] = prozess_normalized
         
         # Bearbeiter mit zentralen Mappings normalisieren
         bearbeiter_raw = data.get("bearbeiter") or data.get("bearbeiter_name")
@@ -356,37 +355,43 @@ class ProcessService:
         if status_raw:
             normalized["status"] = self.mappings.normalize_status(status_raw)
         
-        # Rest bleibt gleich...
         # Priorität konvertieren
         if data.get("prioritaet"):
             try:
                 normalized["prioritaet"] = int(data["prioritaet"])
             except (ValueError, TypeError):
-                normalized["prioritaet"] = 5  # Default
+                normalized["prioritaet"] = 5
         
         # Zeitstempel
         normalized["start_timestamp"] = datetime.now()
         
-        # In _normalize_input_data, nach Zeile ~290 hinzufügen:
-
-        # Individuelle Deadline verarbeiten
+        # NEU: FAHRZEUGSTAMMDATEN DURCHREICHEN
+        fahrzeug_felder = [
+            "marke", "modell", "antriebsart", "farbe", "baujahr",
+            "datum_erstzulassung", "kw_leistung", "km_stand",
+            "anzahl_fahrzeugschluessel", "bereifungsart", 
+            "anzahl_vorhalter", "ek_netto", "besteuerungsart"
+        ]
+        
+        for feld in fahrzeug_felder:
+            if feld in data and data[feld] is not None:
+                normalized[feld] = data[feld]
+        
+        # Individuelle Deadline verarbeiten (bestehendes Code beibehalten)
         if data.get("individuelle_deadline"):
             try:
-                # Verschiedene Datumsformate unterstützen
                 deadline_raw = data["individuelle_deadline"]
                 if isinstance(deadline_raw, str):
-                    # ISO-Format oder deutsches Format
                     if "T" in deadline_raw:
                         normalized["individuelle_deadline"] = datetime.fromisoformat(deadline_raw)
                     else:
-                        # Deutsches Format DD.MM.YYYY
                         from datetime import datetime as dt
                         normalized["individuelle_deadline"] = dt.strptime(deadline_raw, "%d.%m.%Y")
                 elif isinstance(deadline_raw, datetime):
                     normalized["individuelle_deadline"] = deadline_raw
             except Exception as e:
                 self.logger.warning(f"Konnte individuelle Deadline nicht parsen: {e}")
-
+        
         # Datenquelle setzen
         source_mapping = {
             ProcessingSource.ZAPIER: Datenquelle.ZAPIER,
@@ -403,7 +408,9 @@ class ProcessService:
         self.logger.info("🔧 Daten mit zentralen Mappings normalisiert",
                     source=source.value,
                     original_keys=list(data.keys()),
-                    normalized_keys=list(normalized.keys()))
+                    normalized_keys=list(normalized.keys()),
+                    has_marke="marke" in normalized,
+                    has_modell="modell" in normalized)
         
         return normalized
     
@@ -500,6 +507,37 @@ class ProcessService:
                 prozess_data=None
             )
         
+        else:
+            # Fahrzeug existiert - prüfe ob Stammdaten aktualisiert werden müssen
+            update_fields = {}
+            
+            # Prüfe alle möglichen Fahrzeugstammdaten-Felder
+            stammdaten_felder = [
+                "marke", "modell", "antriebsart", "farbe", "baujahr",
+                "datum_erstzulassung", "kw_leistung", "km_stand",
+                "anzahl_fahrzeugschluessel", "bereifungsart", 
+                "anzahl_vorhalter", "ek_netto", "besteuerungsart"
+            ]
+            
+            for feld in stammdaten_felder:
+                if feld in data and data[feld] is not None:
+                    # Nur updaten wenn der neue Wert anders ist
+                    existing_value = getattr(existing_vehicle, feld, None)
+                    if data[feld] != existing_value:
+                        update_fields[feld] = data[feld]
+            
+            # Wenn es Updates gibt, Fahrzeug aktualisieren
+            if update_fields:
+                logger.info("📝 Fahrzeugstammdaten werden aktualisiert",
+                          fin=fin,
+                          fields=list(update_fields.keys()))
+                
+                await self.vehicle_service.update_vehicle(
+                    fin=fin,
+                    update_data=update_fields,
+                    create_update_process=False  # Kein extra Update-Prozess
+                )
+
         # 2. Prozess-Update verarbeiten
         process_result = await self._update_vehicle_process(data, processing_id)
         

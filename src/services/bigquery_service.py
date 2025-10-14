@@ -286,42 +286,45 @@ class BigQueryService:
                     })
                     fields_updated.append(field)
                 
-                if not set_clauses:
-                    self.logger.info("ℹ️ Keine Änderungen für Fahrzeug", fin=fin)
-                    return {
-                        'success': True,
-                        'fin': fin,
-                        'changes_made': False,
-                        'fields_updated': [],
-                        'change_log': []
-                    }
-                
-                # UPDATE Query ausführen
-                # Statt UPDATE, verwende MERGE
-                query = f"""
-                MERGE `{self.dataset_ref}.fahrzeuge_stamm` T
-                USING (SELECT @fin AS fin) S
-                ON T.fin = S.fin
-                WHEN MATCHED THEN
-                UPDATE SET {', '.join(set_clauses)}
-                """
-                
-                # FIN als Parameter hinzufügen
+
+                # KORRIGIERTE VERSION:
+                # FIN-Parameter zuerst hinzufügen (bevor set_clauses geprüft wird)
                 parameters.append(
                     bigquery.ScalarQueryParameter("fin", "STRING", fin)
                 )
+
+            if not set_clauses:
+                self.logger.info("ℹ️ Keine Änderungen für Fahrzeug", fin=fin)
+                return {
+                    'success': True,
+                    'fin': fin,
+                    'changes_made': False,
+                    'fields_updated': [],
+                    'change_log': []
+                }
+
+            # MERGE Query ausführen (bleibt wie es ist)
+            query = f"""
+            MERGE `{self.dataset_ref}.fahrzeuge_stamm` T
+            USING (SELECT @fin AS fin) S
+            ON T.fin = S.fin
+            WHEN MATCHED THEN
+            UPDATE SET {', '.join(set_clauses)}
+            """
+
+
+            
+            job_config = bigquery.QueryJobConfig(query_parameters=parameters)
+            
+            if not self.client:
+                raise RuntimeError("BigQuery Client nicht verfügbar")
                 
-                job_config = bigquery.QueryJobConfig(query_parameters=parameters)
-                
-                if not self.client:
-                    raise RuntimeError("BigQuery Client nicht verfügbar")
-                    
-                query_job = self.client.query(query, job_config=job_config)
-                query_job.result()  # Warte auf Abschluss
-                
-                # Optional: Change-Log in separate Tabelle speichern
-                if log_changes and change_log:
-                    await self._log_vehicle_changes(fin, change_log)
+            query_job = self.client.query(query, job_config=job_config)
+            query_job.result()  # Warte auf Abschluss
+            
+            # Optional: Change-Log in separate Tabelle speichern
+            if log_changes and change_log:
+                await self._log_vehicle_changes(fin, change_log)
             
             self.logger.info("✅ Fahrzeug-Stammdaten aktualisiert", 
                             fin=fin,
