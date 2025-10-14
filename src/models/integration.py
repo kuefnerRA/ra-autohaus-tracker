@@ -271,3 +271,24 @@ class ValidationError(BaseModel):
     field: str
     error: str
     value: Optional[Any] = None
+
+# --- Zapier Webhook Request (nur für den Webhook) ---
+from typing_extensions import Annotated
+from pydantic import BaseModel, Field, StringConstraints
+
+Vin = Annotated[str, StringConstraints(
+    pattern=r'^[A-HJ-NPR-Z0-9]{17}$'
+)]
+
+class ZapierWebhookIn(BaseModel):
+    fin: Vin
+    prozess_name: str
+    neuer_status: str
+    bearbeiter_name: str = Field(..., description="Name des Bearbeiters")
+    prioritaet: int = Field(5, description="Priorität 1..5; Strings werden konvertiert")
+    notizen: str = Field("", description="Freitext-Notizen")
+
+    model_config = {
+        "extra": "ignore",
+        "str_strip_whitespace": True,
+    }

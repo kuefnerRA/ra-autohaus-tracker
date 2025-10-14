@@ -355,12 +355,36 @@ class ProcessService:
         if status_raw:
             normalized["status"] = self.mappings.normalize_status(status_raw)
         
-        # Priorität konvertieren
-        if data.get("prioritaet"):
+        # Priorität konvertieren - KORRIGIERT
+        prio_raw = data.get("prioritaet")
+        if prio_raw is not None:  # Prüfe explizit auf None, nicht auf Falsy
             try:
-                normalized["prioritaet"] = int(data["prioritaet"])
-            except (ValueError, TypeError):
+                # String zu Int konvertieren
+                prio_int = int(str(prio_raw))
+                # Validierung: Muss zwischen 1 und 10 sein
+                if 1 <= prio_int <= 10:
+                    normalized["prioritaet"] = prio_int
+                else:
+                    self.logger.warning(f"Priorität außerhalb des Bereichs: {prio_int}, verwende 5")
+                    normalized["prioritaet"] = 5
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"Konnte Priorität nicht konvertieren: {prio_raw}, Fehler: {e}")
                 normalized["prioritaet"] = 5
+        else:
+            # Keine Priorität angegeben - Default
+            self.logger.debug("Keine Priorität angegeben, verwende Default 5")
+            normalized["prioritaet"] = 5
+        
+        # Zeitstempel
+        normalized["start_timestamp"] = datetime.now()
+        
+        # NEU: NOTIZEN EXPLIZIT SICHERSTELLEN
+        # Stelle sicher, dass Notizen IMMER übergeben werden, auch wenn leer
+        normalized["notizen"] = data.get("notizen") or ""
+        
+        # NEU: ZUSATZ_DATEN EXPLIZIT SICHERSTELLEN  
+        # Stelle sicher, dass zusatz_daten IMMER übergeben werden, auch wenn leer
+        normalized["zusatz_daten"] = data.get("zusatz_daten") or {}
         
         # Zeitstempel
         normalized["start_timestamp"] = datetime.now()
@@ -560,22 +584,46 @@ class ProcessService:
             # Prozess-Daten vorbereiten
             from src.models.integration import FahrzeugProzessCreate
             
-            # pyright: ignore[reportCallIssue]
+            # DEBUG-LOG VOR der Erstellung
+            zusatz_daten = data.get("zusatz_daten")
+            self.logger.debug("📝 Prozess-Daten vor Erstellung:",
+                            fin=data.get("fin"),
+                            prioritaet=data.get("prioritaet"),
+                            notizen_length=len(data.get("notizen", "")) if data.get("notizen") else 0,
+                            zusatz_daten_keys=list(zusatz_daten.keys()) if zusatz_daten and isinstance(zusatz_daten, dict) else [])
+            
+            # WICHTIG: Stelle sicher, dass alle Felder übergeben werden
+            # Priorität als String (Pydantic erwartet String)
+            prioritaet_str = str(data.get("prioritaet", 5))
+            
+            # Notizen - explizit sicherstellen dass sie übergeben werden
+            notizen_value = data.get("notizen") or ""
+            
+            # Zusatzdaten - explizit sicherstellen
+            zusatz_daten_value = data.get("zusatz_daten") or {}
+            
             prozess_data = FahrzeugProzessCreate(
                 prozess_id=data.get("prozess_id"),  # Externe ID durchreichen!
                 fin=data["fin"],
                 prozess_typ=data["prozess_typ"],
                 status=data.get("status", "WARTESCHLANGE"),
                 bearbeiter=data.get("bearbeiter"),
-                prioritaet=str(data.get("prioritaet", 5)),
+                prioritaet=prioritaet_str,  # Verwende explizite Variable
                 anlieferung_datum=None,  # Optional
                 start_timestamp=data.get("start_timestamp"),  # Falls vorhanden
                 ende_timestamp=None,  # Optional
                 sla_tage=None,  # Wird später berechnet
+                individuelle_deadline=data.get("individuelle_deadline"),  # NEU
                 datenquelle=data.get("datenquelle", Datenquelle.API),
-                notizen=data.get("notizen", ""),
-                zusatz_daten=data.get("zusatz_daten", {})
+                notizen=notizen_value,  # Verwende explizite Variable
+                zusatz_daten=zusatz_daten_value  # Verwende explizite Variable
             )
+            
+            # DEBUG-LOG NACH der Erstellung
+            self.logger.debug("📝 FahrzeugProzessCreate erstellt:",
+                            prioritaet=prozess_data.prioritaet,
+                            notizen_vorhanden=bool(prozess_data.notizen),
+                            notizen_length=len(prozess_data.notizen) if prozess_data.notizen else 0)
             
             # Prozess über VehicleService erstellen
             created_process = await self.vehicle_service.create_vehicle_process(
@@ -588,6 +636,8 @@ class ProcessService:
                     prozess_id=created_process.prozess_id,
                     prozess_typ=created_process.prozess_typ,
                     status=data.get("status"),
+                    prioritaet=prioritaet_str,  # Log die Priorität
+                    notizen_length=len(notizen_value) if notizen_value else 0,  # Log Notizen-Länge
                     processing_id=processing_id)
             
             return {"success": True, "processing_id": processing_id, "prozess_id": created_process.prozess_id}
@@ -597,7 +647,7 @@ class ProcessService:
                         error=str(e),
                         fin=data.get("fin"))
             return {"success": False, "processing_id": processing_id, "error": str(e)}
-    
+
     def _calculate_sla_data(self, prozess_typ: ProzessTyp, start_time: datetime) -> Dict[str, Any]:
         """Berechnet SLA-Status für einen Prozess."""
         
