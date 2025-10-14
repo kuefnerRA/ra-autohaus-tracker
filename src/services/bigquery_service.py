@@ -285,13 +285,6 @@ class BigQueryService:
                         'timestamp': now.isoformat()
                     })
                     fields_updated.append(field)
-                
-
-                # KORRIGIERTE VERSION:
-                # FIN-Parameter zuerst hinzufügen (bevor set_clauses geprüft wird)
-                parameters.append(
-                    bigquery.ScalarQueryParameter("fin", "STRING", fin)
-                )
 
             if not set_clauses:
                 self.logger.info("ℹ️ Keine Änderungen für Fahrzeug", fin=fin)
@@ -303,7 +296,12 @@ class BigQueryService:
                     'change_log': []
                 }
 
-            # MERGE Query ausführen (bleibt wie es ist)
+            # FIN-Parameter EINMAL hinzufügen (AUSSERHALB der Schleife!)
+            parameters.append(
+                bigquery.ScalarQueryParameter("fin", "STRING", fin)
+            )
+
+            # MERGE Query ausführen
             query = f"""
             MERGE `{self.dataset_ref}.fahrzeuge_stamm` T
             USING (SELECT @fin AS fin) S
@@ -311,8 +309,6 @@ class BigQueryService:
             WHEN MATCHED THEN
             UPDATE SET {', '.join(set_clauses)}
             """
-
-
             
             job_config = bigquery.QueryJobConfig(query_parameters=parameters)
             

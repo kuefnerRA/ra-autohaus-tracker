@@ -30,6 +30,8 @@ class UnifiedHandler:
         """
         Verarbeitet Daten aus beliebiger Quelle einheitlich
         """
+        logger.info(f"UnifiedHandler erhält von {source}: bearbeiter={data.get('bearbeiter')}, "
+                f"prioritaet={data.get('prioritaet')}, notizen={data.get('notizen')}")
         try:
             self.logger.info(f"🔥 Verarbeite Daten von {source}: {data.get('fin', 'Unbekannt')}")
             
@@ -184,6 +186,14 @@ class UnifiedHandler:
                 "prozess_typ": data.get("prozess_typ"),
                 "status": data.get("status"),
                 "bearbeiter": data.get("bearbeiter"),
+                "prioritaet": data.get("prioritaet"),  # NEU: Priorität durchreichen
+                "notizen": data.get("notizen"),        # NEU: Notizen durchreichen
+                "zusatz_daten": data.get("zusatz_daten"),  # NEU: Zusatzdaten durchreichen
+                "anlieferung_datum": data.get("anlieferung_datum"),
+                "start_timestamp": data.get("start_timestamp"),
+                "ende_timestamp": data.get("ende_timestamp"),
+                "sla_tage": data.get("sla_tage"),
+                "individuelle_deadline": data.get("individuelle_deadline"),
                 "source": "unified_handler"
             }
             

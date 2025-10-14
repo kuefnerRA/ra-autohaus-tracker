@@ -1,8 +1,8 @@
 # Service-Architektur - RA Autohaus Tracker
 
 **Reinhardt Automobile GmbH**  
-**Version:** 1.0.0-alpha  
-**Datum:** 03.09.2025  
+**Version:** 1.1.0  
+**Datum:** 14.10.2025  
 **Autor:** Maximilian Reinhardt
 
 ## Überblick
@@ -36,10 +36,20 @@ Das RA Autohaus Tracker System implementiert eine **Service-orientierte Architek
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
+│                   Integration Layer                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │ UnifiedHandler  │  │ ZapierHandler   │  │ FlowersHandler  │ │
+│  │                 │  │                 │  │                 │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
 │                     Business Layer                         │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
 │  │  VehicleService │  │ ProcessService  │  │DashboardService │ │
-│  │   (Phase 1)     │  │   (Phase 2)     │  │   (Phase 2)     │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │  EmailService   │  │ProcessCleanup   │  │VINDecoderService│ │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -47,7 +57,16 @@ Das RA Autohaus Tracker System implementiert eine **Service-orientierte Architek
 │                      Data Layer                            │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
 │  │ BigQueryService │  │  InfoService    │  │  External APIs  │ │
-│  │   (Phase 1)     │  │   (Phase 2)     │  │    (Audaris)    │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                    Core Components                         │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │  Dependencies   │  │ BackgroundTasks │  │   Performance   │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │ LoggingConfig   │  │    Mappings     │  │ ProcessConfig   │ │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -60,16 +79,17 @@ Das RA Autohaus Tracker System implementiert eine **Service-orientierte Architek
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Implementierte Services (Phase 1)
+## Implementierte Services
 
-### BigQueryService (Data Layer)
+### Data Layer Services
 
+#### BigQueryService
 **Datei:** `src/services/bigquery_service.py`
 
 **Verantwortlichkeiten:**
 - Zentrale BigQuery-Verbindungsverwaltung
 - Service Account Impersonation
-- CRUD-Operationen für `fahrzeuge_stamm` und `fahrzeug_prozesse`
+- CRUD-Operationen für alle Tabellen
 - Parametrisierte Query-Ausführung
 - Mock-Fallback für lokale Entwicklung
 
@@ -89,8 +109,23 @@ async def health_check() -> Dict[str, Any]
 - **Partitionierung:** Nach `created_at` (täglich)
 - **Clustering:** Nach `fin`, `marke`, `prozess_typ`, `bearbeiter`
 
-### VehicleService (Business Layer)
+#### InfoService
+**Datei:** `src/services/info_service.py`
 
+**Verantwortlichkeiten:**
+- System-Konfigurationsverwaltung
+- Bearbeiter-Informationen
+- SLA-Definitionen
+- Prozesstyp-Konfigurationen
+
+**Kernfunktionalitäten:**
+- Bereitstellung von System-Metadaten
+- Konfigurierbare Geschäftsregeln
+- Mapping-Definitionen für Integrationen
+
+### Business Layer Services
+
+#### VehicleService
 **Datei:** `src/services/vehicle_service.py`
 
 **Verantwortlichkeiten:**
@@ -114,16 +149,218 @@ async def update_vehicle_status(fin: str, new_status: str, bearbeiter: str, noti
 async def get_vehicle_kpis() -> List[KPIData]
 ```
 
-**Geschäftsregeln:**
-- **FIN-Validierung:** 17-stellige alphanumerische Fahrzeugidentifizierungsnummer
-- **Duplikat-Prüfung:** Keine doppelten FINs im System
-- **Baujahr-Plausibilität:** Nicht in der Zukunft liegend
-- **Einkaufspreis-Grenze:** Maximum 500.000 EUR (Plausibilitätsprüfung)
+#### ProcessService
+**Datei:** `src/services/process_service.py`
 
-## Geschäftslogik-Konfiguration
+**Verantwortlichkeiten:**
+- Prozess-Lifecycle-Management
+- Status-Übergänge und Validierung
+- Prozess-Historie und Tracking
+- Integration mit externen Systemen
 
-### SLA-Konfiguration nach Prozesstyp
+**Kernfunktionalitäten:**
+- Prozess-Erstellung und -Updates
+- Automatische Status-Transitions
+- SLA-Tracking pro Prozesstyp
+- Bulk-Operationen für Prozesse
 
+#### DashboardService
+**Datei:** `src/services/dashboard_service.py`
+
+**Verantwortlichkeiten:**
+- Real-time KPI-Aggregation
+- Dashboard-Datenaufbereitung
+- Performance-Metriken
+- Trend-Analysen
+
+**Kernfunktionalitäten:**
+- Echtzeit-Statistiken
+- SLA-Performance-Monitoring
+- Bearbeiter-Workload-Analyse
+- Historische Datenauswertung
+
+#### EmailService
+**Datei:** `src/services/email_service.py`
+
+**Verantwortlichkeiten:**
+- E-Mail-Verarbeitung und -Parsing
+- Flowers-E-Mail-Integration
+- Template-Management
+- Notification-Versand
+
+**Kernfunktionalitäten:**
+- Strukturierte E-Mail-Datenextraktion
+- Automatische Prozess-Updates via E-Mail
+- E-Mail-basierte Benachrichtigungen
+- Template-Engine für Standardmails
+
+#### ProcessCleanupService
+**Datei:** `src/services/process_cleanup_service.py`
+
+**Verantwortlichkeiten:**
+- Automatische Datenbereinigung
+- Veraltete Prozesse archivieren
+- Duplikat-Erkennung und -Bereinigung
+- Background-Job-Management
+
+**Kernfunktionalitäten:**
+- Scheduled Cleanup-Jobs
+- Intelligente Duplikat-Erkennung
+- Archivierung alter Prozesse
+- Performance-Optimierung durch Datenreduktion
+
+#### VINDecoderService
+**Datei:** `src/services/vin_decoder_service.py`
+
+**Verantwortlichkeiten:**
+- VIN (Fahrzeugidentnummer) Dekodierung
+- Fahrzeugdaten-Anreicherung
+- Hersteller- und Modellerkennung
+- Technische Datenextraktion
+
+**Kernfunktionalitäten:**
+- VIN-Validierung und -Parsing
+- Automatische Marken-/Modellerkennung
+- Baujahr-Extraktion
+- Integration externer VIN-Datenbanken
+
+### Integration Layer (Handlers)
+
+#### UnifiedHandler
+**Datei:** `src/handlers/unified_handler.py`
+
+**Verantwortlichkeiten:**
+- Zentrale Eingangsschnittstelle für alle Datenquellen
+- Normalisierung heterogener Datenformate
+- Routing zu spezialisierten Handlers
+- Fehlerbehandlung und Retry-Logic
+
+#### ZapierHandler
+**Datei:** `src/handlers/zapier_handler.py`
+
+**Verantwortlichkeiten:**
+- Zapier-Webhook-Verarbeitung
+- Feld-Mapping für Zapier-Daten
+- Validierung eingehender Payloads
+- Response-Formatierung für Zapier
+
+**Endpoint:** `/api/v1/integration/zapier/webhook`
+
+#### FlowersHandler
+**Datei:** `src/handlers/flowers_handler.py`
+
+**Verantwortlichkeiten:**
+- Flowers-Software E-Mail-Parsing
+- Strukturierte Datenextraktion
+- Prozess-Updates aus E-Mails
+- Fehlerhafte E-Mail-Behandlung
+
+**Endpoint:** `/api/v1/integration/flowers/email`
+
+#### DataTransformer
+**Datei:** `src/handlers/data_transformer.py`
+
+**Verantwortlichkeiten:**
+- Datenformat-Transformation
+- Feld-Mapping zwischen Systemen
+- Datenvalidierung und -Bereinigung
+- Type-Conversion und Normalisierung
+
+### Core Components
+
+#### Dependencies
+**Datei:** `src/core/dependencies.py`
+
+**Verantwortlichkeiten:**
+- Service-Lifecycle-Management
+- Dependency Injection Container
+- Singleton-Pattern-Implementation
+- Service-Factory-Funktionen
+
+**Kernfunktionen:**
+```python
+@lru_cache()
+def get_bigquery_service() -> BigQueryService
+@lru_cache()
+def get_vehicle_service() -> VehicleService
+async def startup_services()
+async def shutdown_services()
+async def check_all_services_health()
+```
+
+#### BackgroundTasks
+**Datei:** `src/core/background_tasks.py`
+
+**Verantwortlichkeiten:**
+- Asynchrone Task-Verwaltung
+- Scheduled Jobs Koordination
+- Task-Queue-Management
+- Background-Worker-Orchestrierung
+
+**Implementierte Tasks:**
+- Process Cleanup (alle 10 Minuten in Production)
+- SLA-Monitoring (kontinuierlich)
+- Daten-Synchronisation
+
+#### LoggingConfig
+**Datei:** `src/core/logging_config.py`
+
+**Verantwortlichkeiten:**
+- Strukturiertes Logging-Setup
+- Log-Level-Konfiguration
+- Log-Format-Definition
+- Performance-Logging
+
+**Features:**
+- Structlog-Integration
+- JSON-Renderer für Production
+- Console-Renderer für Development
+- Request-ID-Tracking
+
+#### Performance
+**Datei:** `src/core/performance.py`
+
+**Verantwortlichkeiten:**
+- Performance-Metriken-Erfassung
+- Response-Time-Tracking
+- Database-Query-Profiling
+- Memory-Usage-Monitoring
+
+**Metriken:**
+- API Response Times
+- BigQuery Query Performance
+- Service-Operation-Dauer
+- Background-Task-Execution-Time
+
+#### Mappings
+**Datei:** `src/core/mappings.py`
+
+**Verantwortlichkeiten:**
+- Zentrale Mapping-Definitionen
+- Bearbeiter-Name-Normalisierung
+- Prozesstyp-Mappings
+- Feld-Transformations-Regeln
+
+**Mapping-Tabellen:**
+```python
+BEARBEITER_MAPPING = {
+    "Thomas K.": "Thomas Küfner",
+    "Max R.": "Maximilian Reinhardt",
+    "T. Küfner": "Thomas Küfner",
+    "M. Reinhardt": "Maximilian Reinhardt"
+}
+```
+
+#### ProcessConfig
+**Datei:** `src/core/process_config.py`
+
+**Verantwortlichkeiten:**
+- Prozess-Konfigurationen
+- SLA-Definitionen
+- Status-Übergangs-Matrix
+- Prioritäts-Regeln
+
+**Konfiguration:**
 ```python
 PROZESS_CONFIG = {
     ProzessTyp.EINKAUF:      {"sla_stunden": 48,  "priority_range": [1, 3]},
@@ -135,56 +372,116 @@ PROZESS_CONFIG = {
 }
 ```
 
-**SLA-Berechnung:**
+### API Routes
+
+#### Vehicles Route
+**Datei:** `src/api/routes/vehicles.py`  
+**Prefix:** `/api/v1/fahrzeuge`
+
+**Endpoints:**
+- `GET /` - Liste aller Fahrzeuge
+- `GET /{fin}` - Fahrzeugdetails
+- `POST /` - Neues Fahrzeug anlegen
+- `PUT /{fin}` - Fahrzeug aktualisieren
+- `DELETE /{fin}` - Fahrzeug löschen
+- `GET /kpis` - KPI-Dashboard-Daten
+
+#### Process Route
+**Datei:** `src/api/routes/process.py`  
+**Prefix:** `/api/v1/prozesse`
+
+**Endpoints:**
+- `GET /` - Prozessliste
+- `GET /{prozess_id}` - Prozessdetails
+- `POST /` - Neuer Prozess
+- `PUT /{prozess_id}` - Prozess-Update
+- `POST /bulk` - Bulk-Prozess-Updates
+
+#### Dashboard Route
+**Datei:** `src/api/routes/dashboard.py`  
+**Prefix:** `/api/v1/dashboard`
+
+**Endpoints:**
+- `GET /overview` - Dashboard-Übersicht
+- `GET /sla-status` - SLA-Performance
+- `GET /workload` - Bearbeiter-Auslastung
+- `GET /trends` - Trend-Analysen
+
+#### Integration Route
+**Datei:** `src/api/routes/integration.py`  
+**Prefix:** `/api/v1/integration`
+
+**Endpoints:**
+- `POST /zapier/webhook` - Zapier-Integration
+- `POST /flowers/email` - Flowers-Email-Parser
+- `POST /unified` - Unified Data Handler
+
+#### Email Route
+**Datei:** `src/api/routes/email.py`  
+**Prefix:** `/api/v1/email`
+
+**Endpoints:**
+- `POST /parse` - E-Mail-Parsing
+- `POST /send` - E-Mail-Versand
+- `GET /templates` - Template-Liste
+- `POST /templates` - Template erstellen
+
+#### Info Route
+**Datei:** `src/api/routes/info.py`  
+**Prefix:** `/api/v1/info`
+
+**Endpoints:**
+- `GET /system` - System-Information
+- `GET /config` - Konfiguration
+- `GET /bearbeiter` - Bearbeiter-Liste
+- `GET /prozess-typen` - Prozesstyp-Definitionen
+
+## Geschäftslogik-Konfiguration
+
+### SLA-Berechnung
 - **Start-Zeit:** `prozess.start_timestamp` oder `prozess.erstellt_am`
 - **Deadline:** Start-Zeit + SLA-Stunden
 - **Kritisch:** Wenn `tage_bis_deadline <= 1`
 - **Überfällig:** Wenn `tage_bis_deadline < 0`
 
-### Bearbeiter-Mapping
-
-```python
-BEARBEITER_MAPPING = {
-    "Thomas K.": "Thomas Küfner",
-    "Max R.": "Maximilian Reinhardt",
-    "T. Küfner": "Thomas Küfner",
-    "M. Reinhardt": "Maximilian Reinhardt"
-}
-```
-
-**Zweck:** Normalisierung unterschiedlicher Namensformate aus verschiedenen Datenquellen (Zapier, E-Mail, manuelle Eingabe).
+### Geschäftsregeln
+- **FIN-Validierung:** 17-stellige alphanumerische Fahrzeugidentifizierungsnummer
+- **Duplikat-Prüfung:** Keine doppelten FINs im System
+- **Baujahr-Plausibilität:** Nicht in der Zukunft liegend
+- **Einkaufspreis-Grenze:** Maximum 500.000 EUR (Plausibilitätsprüfung)
+- **Auto-Fahrzeugerstellung:** Bei Prozess ohne Fahrzeug wird automatisch ein Fahrzeugstamm angelegt
 
 ## Data Flow
 
 ### Fahrzeug-Erstellung
 ```
 1. API Request → VehicleService.create_complete_vehicle()
-2. Geschäftsregeln validieren → _validate_vehicle_data()
-3. Fahrzeugstammdaten speichern → BigQueryService.create_fahrzeug_stamm()
-4. Optional: Prozess erstellen → BigQueryService.create_fahrzeug_prozess()
-5. SLA-Daten berechnen → _calculate_sla_data()
-6. Vollständiges Fahrzeug zurückgeben
+2. Optional: VIN-Dekodierung → VINDecoderService.decode()
+3. Geschäftsregeln validieren → _validate_vehicle_data()
+4. Fahrzeugstammdaten speichern → BigQueryService.create_fahrzeug_stamm()
+5. Optional: Prozess erstellen → BigQueryService.create_fahrzeug_prozess()
+6. SLA-Daten berechnen → _calculate_sla_data()
+7. Vollständiges Fahrzeug zurückgeben
 ```
 
-### Fahrzeug-Abruf mit Prozessen
+### Integration-Flow (Zapier/Flowers)
 ```
-1. API Request → VehicleService.get_vehicles()
-2. Filter normalisieren (Bearbeiter-Mapping)
-3. JOIN-Query ausführen → BigQueryService.get_fahrzeuge_mit_prozessen()
-4. Business Logic anwenden → _enrich_vehicle_data()
-5. SLA-Filter anwenden → _is_sla_critical()
-6. Pydantic Models konvertieren → FahrzeugMitProzess
+1. Webhook/Email → Integration Route
+2. Handler-Verarbeitung → ZapierHandler/FlowersHandler
+3. Daten-Transformation → DataTransformer
+4. Unified Processing → UnifiedHandler
+5. Auto-Fahrzeug-Check → VehicleService
+6. Prozess-Erstellung → ProcessService
+7. Response/Acknowledgment
 ```
 
-### KPI-Berechnung
+### Background-Cleanup
 ```
-1. Alle Fahrzeuge abrufen → get_vehicles(limit=1000)
-2. Aggregationen berechnen:
-   - Gesamtanzahl Fahrzeuge
-   - Verteilung nach Prozesstyp
-   - SLA-kritische Fahrzeuge
-   - Durchschnittlicher Einkaufspreis
-3. KPIData Models erstellen
+1. Scheduler-Trigger (alle 10 Min)
+2. ProcessCleanupService.execute()
+3. Identifikation alter/duplikater Prozesse
+4. Archivierung/Bereinigung
+5. Performance-Statistiken Update
 ```
 
 ## Environment-Konfiguration
@@ -204,6 +501,10 @@ LOG_LEVEL=INFO
 # API Configuration
 API_HOST=0.0.0.0
 API_PORT=8080
+
+# Background Jobs
+ENABLE_BACKGROUND_JOBS=true
+CLEANUP_INTERVAL_MINUTES=10
 ```
 
 ### Entwicklungsumgebung
@@ -221,40 +522,9 @@ LOG_LEVEL=DEBUG
 API_HOST=0.0.0.0
 API_PORT=8080
 API_RELOAD=true
-```
 
-## Dependency Injection
-
-### Service-Initialisierung
-```python
-# src/core/dependencies.py
-
-@lru_cache()
-def get_bigquery_service() -> BigQueryService:
-    """Singleton BigQuery Service."""
-    return BigQueryService(
-        project_id=os.getenv('GOOGLE_CLOUD_PROJECT'),
-        dataset_name=os.getenv('BIGQUERY_DATASET')
-    )
-
-@lru_cache()
-def get_vehicle_service() -> VehicleService:
-    """Singleton Vehicle Service mit BigQuery Dependency."""
-    bigquery_service = get_bigquery_service()
-    return VehicleService(bigquery_service=bigquery_service)
-```
-
-### Lifecycle Management
-```python
-async def startup_services():
-    """Services beim Application-Start initialisieren."""
-    bigquery_service = get_bigquery_service()
-    vehicle_service = get_vehicle_service()
-    health = await check_all_services_health()
-    
-async def shutdown_services():
-    """Services beim Application-Shutdown aufräumen."""
-    # Cleanup-Logik falls erforderlich
+# Background Jobs
+ENABLE_BACKGROUND_JOBS=false
 ```
 
 ## Error Handling
@@ -262,6 +532,9 @@ async def shutdown_services():
 ### Service-Level Error Handling
 - **BigQueryService:** GoogleAPIError, NotFound, Timeout-Handling
 - **VehicleService:** ValidationError, BusinessRuleViolation, DataNotFound
+- **ProcessService:** StatusTransitionError, ProcessNotFound
+- **EmailService:** ParseError, TemplateNotFound
+- **VINDecoderService:** InvalidVIN, DecodingError
 - **Structured Logging:** Alle Errors mit Context-Informationen
 - **Graceful Degradation:** Mock-Fallback bei Service-Ausfällen
 
@@ -282,19 +555,21 @@ except Exception as e:
 ## Testing-Strategie
 
 ### Unit Tests
-- **BigQueryService:** Mock BigQuery Client, Parametrisierte Queries testen
-- **VehicleService:** Mock BigQueryService, Geschäftslogik isoliert testen
-- **Pydantic Models:** Validierung und Serialisierung testen
+- **Services:** Mock Dependencies, isolierte Business-Logic-Tests
+- **Handlers:** Input-Validation, Transformation-Tests
+- **Core Components:** Configuration-Tests, Mapping-Tests
+- **Pydantic Models:** Validierung und Serialisierung
 
 ### Integration Tests
 - **Service-Kommunikation:** Echte Service-Dependencies
 - **BigQuery Integration:** Testdaten in separatem Dataset
 - **End-to-End:** API-Requests bis zur Datenbank
+- **Webhook-Tests:** Mock-Payloads von Zapier/Flowers
 
-### Health Checks
-- **Service-Level:** `health_check()` Methode in jedem Service
-- **System-Level:** `/health` Endpoint für Monitoring
-- **Dependency-Check:** Alle abhängigen Services prüfen
+### Performance Tests
+- **Load Testing:** Concurrent Request Handling
+- **Query Performance:** BigQuery-Optimierung
+- **Background Jobs:** Task-Execution-Time
 
 ## Monitoring & Observability
 
@@ -305,18 +580,22 @@ logger.info("Operation erfolgreich",
            service="VehicleService",
            operation="create_vehicle",
            fin="WVWZZZ1JZ8W123456",
-           duration_ms=150)
+           duration_ms=150,
+           request_id=request.state.request_id)
 ```
 
 ### Metriken
 - **Response Times:** Service-Operation-Dauer
 - **Error Rates:** Fehlerquote nach Service und Operation
 - **Business Metrics:** KPIs, SLA-Verletzungen, Fahrzeugdurchsatz
+- **Integration Metrics:** Webhook-Success-Rate, Email-Parse-Rate
+- **Background Job Metrics:** Execution-Time, Cleanup-Count
 
 ### Health Check Endpoints
 - **`/health`:** System-weiter Health Check
 - **`/api/v1/fahrzeuge/health`:** Vehicle Service Health
 - **Service-interne Health Checks:** BigQuery-Verbindung, Dependencies
+- **Integration Health:** Externe API-Verfügbarkeit
 
 ## Deployment-Architektur
 
@@ -324,32 +603,14 @@ logger.info("Operation erfolgreich",
 - **Mock-Services:** Lokale Entwicklung ohne Google Cloud
 - **Hot Reload:** Automatischer Code-Reload bei Änderungen
 - **Debug-Endpoints:** Erweiterte Logging und Debugging-Features
+- **Test-Datenbank:** Separates BigQuery-Dataset für Tests
 
 ### Google Cloud Run Production
 - **Container-Deployment:** Automatisches Scaling basierend auf Traffic
 - **Service Account Impersonation:** Sichere BigQuery-Authentifizierung  
 - **Environment-based Configuration:** Produktions- vs. Entwicklungskonfiguration
 - **Health Check Integration:** Google Cloud Load Balancer Health Checks
-
-## Roadmap - Geplante Services (Phase 2+)
-
-### ProcessService (Integration Layer)
-- **Zapier Webhook Integration:** Automatische Prozess-Updates
-- **Flowers Email Processing:** E-Mail-basierte Statusänderungen  
-- **Unified Data Processing:** Einheitliche Verarbeitung aus verschiedenen Quellen
-- **Background Tasks:** Asynchrone Verarbeitung von Prozess-Updates
-
-### DashboardService (Analytics Layer)
-- **Real-time KPIs:** Live-Dashboard-Daten
-- **SLA-Monitoring:** Überwachung und Alerting bei SLA-Verletzungen
-- **Bearbeiter-Workload:** Kapazitätsplanung und Arbeitsverteilung
-- **Historische Analysen:** Trend-Analyse und Reporting
-
-### InfoService (Configuration Layer)
-- **System-Konfiguration:** Zentrale Verwaltung von Prozess-Definitionen
-- **Bearbeiter-Management:** Dynamische Bearbeiter-Zuordnung
-- **SLA-Konfiguration:** Anpassbare SLA-Vorgaben nach Prozesstyp
-- **Integration-Mappings:** Konfigurierbare Feld-Mappings für verschiedene Datenquellen
+- **Background Job Orchestration:** Cloud Scheduler Integration
 
 ## Wartung und Weiterentwicklung
 
@@ -358,27 +619,46 @@ logger.info("Operation erfolgreich",
 - **SOLID-Prinzipien:** Saubere Architektur-Patterns
 - **Error Handling:** Comprehensive Exception-Management
 - **Documentation:** Inline-Dokumentation und Architecture Decision Records
+- **Code Reviews:** Merge-Request-basierte Qualitätskontrolle
 
 ### Performance-Optimierung
 - **BigQuery Query-Optimierung:** Partitionierung und Clustering
-- **Caching-Strategien:** Redis für häufige Abfragen (zukünftige Erweiterung)
+- **Caching-Strategien:** In-Memory-Caching für häufige Abfragen
 - **Async/Await:** Non-blocking I/O für bessere Concurrency
 - **Connection Pooling:** Effiziente Ressourcen-Nutzung
+- **Lazy Loading:** Services nur bei Bedarf initialisieren
 
 ### Security
 - **Service Account Impersonation:** Principle of Least Privilege
 - **Input Validation:** Pydantic-basierte Eingabevalidierung
 - **SQL Injection Prevention:** Parametrisierte Queries
 - **Error Information Disclosure:** Sichere Error-Messages in Produktion
+- **API Rate Limiting:** DDoS-Schutz (geplant)
+- **Authentication/Authorization:** OAuth2-Integration (geplant)
 
-## Integration Handler (Phase 3 - Abgeschlossen)
+## Roadmap - Zukünftige Erweiterungen
 
-### UnifiedHandler
-- Zentrale Datenverarbeitung für alle Quellen
-- Normalisierung von Prozessen und Bearbeitern
-- Auto-Fahrzeugerstellung bei Bedarf
+### Phase 4 - Q4 2025
+- **Redis-Integration:** Caching-Layer für Performance
+- **GraphQL API:** Alternative API-Schnittstelle
+- **Audit-Log-Service:** Vollständige Änderungsverfolgung
+- **Notification-Service:** Push-Notifications und Alerts
 
-### ZapierHandler & FlowersHandler  
-- `/api/v1/integration/zapier/webhook` - Zapier-Integration
-- `/api/v1/integration/flowers/email` - Email-Parser
-- Erfolgreiche Tests mit echten Daten
+### Phase 5 - Q1 2026
+- **ML-Integration:** Predictive Analytics für SLA-Vorhersagen
+- **Multi-Tenant-Support:** Mandantenfähigkeit
+- **API Gateway:** Rate-Limiting und API-Key-Management
+- **Reporting-Service:** Automatisierte Report-Generierung
+
+## Versionierung
+
+### Aktuelle Version: 1.1.0
+- **Major Release 1:** Produktivsetzung Core-Funktionalität
+- **Minor Release 1:** Integration Layer vollständig implementiert
+- **Patch Level 0:** Stabile Version ohne kritische Bugs
+
+### Changelog
+- **1.1.0** (14.10.2025): Integration Layer, Background Tasks, VIN-Decoder
+- **1.0.0** (03.09.2025): Initial Release mit Core-Services
+- **0.9.0** (15.08.2025): Beta-Version mit BigQuery-Integration
+- **0.5.0** (01.08.2025): Alpha-Version mit Mock-Services

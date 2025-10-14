@@ -5,7 +5,7 @@ Transformiert Rohdaten in Pydantic-kompatible Formate
 
 import re
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
@@ -27,12 +27,16 @@ class DataTransformer:
         """
         transformed = {}
 
-            # DEBUG: Eingangsdaten prüfen
+        # DEBUG: Eingangsdaten prüfen
         logger.info(f"🔍 DEBUG - Eingangsdaten: {list(data.keys())}")
-        logger.info(f"🔍 DEBUG - neuer_status vorhanden: {'neuer_status' in data}")
-        logger.info(f"🔍 DEBUG - neuer_status Wert: {data.get('neuer_status')}")
+        logger.info(f"🔍 DEBUG - Kritische Felder:")
+        logger.info(f"  - bearbeiter_name: {data.get('bearbeiter_name')}")
+        logger.info(f"  - bearbeiter: {data.get('bearbeiter')}")
+        logger.info(f"  - prioritaet: {data.get('prioritaet')}")
+        logger.info(f"  - notizen: {data.get('notizen')}")
+        logger.info(f"  - zusatz_daten: {data.get('zusatz_daten')}")
 
-        # WICHTIG: Status-Mapping hinzufügen
+        # === STATUS-MAPPING ===
         # Zapier sendet "neuer_status", wir brauchen "status"
         if 'neuer_status' in data and data['neuer_status']:
             # Bereinige doppelte Anführungszeichen
@@ -43,7 +47,7 @@ class DataTransformer:
             status_value = str(data['status']).strip().strip('"').strip("'") 
             transformed['status'] = status_value
         
-        # Prozess-Mapping
+        # === PROZESS-MAPPING ===
         # Zapier sendet "prozess_name", wir brauchen "prozess_typ"
         if 'prozess_name' in data and data['prozess_name']:
             transformed['prozess_typ'] = data['prozess_name']
@@ -51,29 +55,87 @@ class DataTransformer:
         elif 'prozess_typ' in data and data['prozess_typ']:
             transformed['prozess_typ'] = data['prozess_typ']
         
-        # Direkt durchreichen (keine Transformation nötig)
+        # === BEARBEITER-MAPPING (KRITISCH!) ===
+        # Zapier sendet oft "bearbeiter_name" statt "bearbeiter"
+        if 'bearbeiter_name' in data and data['bearbeiter_name']:
+            transformed['bearbeiter'] = data['bearbeiter_name']
+            logger.debug(f"Mapped: bearbeiter_name '{data['bearbeiter_name']}' -> bearbeiter")
+        elif 'bearbeiter' in data and data['bearbeiter']:
+            transformed['bearbeiter'] = data['bearbeiter']
+        
+        # === PRIORITÄT (KRITISCH!) ===
+        # Muss als String zwischen "1" und "9" sein
+        if 'prioritaet' in data and data['prioritaet'] is not None:
+            prio_value = str(data['prioritaet']).strip()
+            # Validierung: Muss eine Ziffer zwischen 1-9 sein
+            if prio_value.isdigit() and 1 <= int(prio_value) <= 9:
+                transformed['prioritaet'] = prio_value
+                logger.debug(f"Priorität übernommen: {prio_value}")
+            else:
+                logger.warning(f"Ungültige Priorität '{prio_value}' - verwende Standard '5'")
+                transformed['prioritaet'] = "5"  # Default-Wert
+        
+        # === NOTIZEN (KRITISCH!) ===
+        if 'notizen' in data and data['notizen']:
+            transformed['notizen'] = str(data['notizen']).strip()
+            logger.debug(f"Notizen übernommen: {len(transformed['notizen'])} Zeichen")
+        
+        # === ZUSATZ_DATEN (KRITISCH!) ===
+        if 'zusatz_daten' in data and data['zusatz_daten']:
+            if isinstance(data['zusatz_daten'], dict):
+                transformed['zusatz_daten'] = data['zusatz_daten']
+                logger.debug(f"Zusatzdaten übernommen: {list(data['zusatz_daten'].keys())}")
+            else:
+                logger.warning(f"zusatz_daten ist kein Dictionary: {type(data['zusatz_daten'])}")
+        
+        # === DIREKT DURCHREICHEN (erweiterte Liste!) ===
         direct_fields = [
-            'fin', 'marke', 'modell', 'antriebsart', 'farbe', 
-            'bearbeiter'
+            'fin',                      # Fahrzeug-ID
+            'marke',                    # Fahrzeugdaten
+            'modell',
+            'antriebsart',
+            'farbe',
+            'start_timestamp',          # Zeitstempel
+            'ende_timestamp',
+            'anlieferung_datum',
+            'sla_tage',                 # SLA
+            'individuelle_deadline',
         ]
+        
         for field in direct_fields:
             if field in data and data[field] is not None:
                 transformed[field] = data[field]
         
-        # Integer-Felder
+        # === INTEGER-FELDER ===
         transformed.update(DataTransformer._transform_integers(data))
         
-        # Decimal-Felder (Deutsches Format -> Decimal)
+        # === DECIMAL-FELDER (Deutsches Format -> Decimal) ===
         transformed.update(DataTransformer._transform_decimals(data))
         
-        # Enum-Felder
+        # === ENUM-FELDER ===
         transformed.update(DataTransformer._transform_enums(data))
         
-        # Datum-Felder
+        # === DATUM-FELDER ===
         transformed.update(DataTransformer._transform_dates(data))
         
+        # FINALER LOG
         logger.info(f"✅ Daten transformiert: {len(transformed)} Felder")
-        logger.debug(f"Transformierte Felder: {list(transformed.keys())}")
+        logger.info(f"📊 Transformierte Felder: {list(transformed.keys())}")
+        
+        # Kritische Felder extra loggen
+        if 'bearbeiter' in transformed:
+            logger.info(f"✓ Bearbeiter: {transformed['bearbeiter']}")
+        else:
+            logger.warning("⚠️ KEIN Bearbeiter im transformierten Output!")
+            
+        if 'prioritaet' in transformed:
+            logger.info(f"✓ Priorität: {transformed['prioritaet']}")
+        else:
+            logger.warning("⚠️ KEINE Priorität im transformierten Output!")
+            
+        if 'notizen' in transformed:
+            logger.info(f"✓ Notizen: {len(transformed['notizen'])} Zeichen")
+        
         return transformed
     
     @staticmethod
@@ -131,6 +193,8 @@ class DataTransformer:
                     # Deutsches Format: Punkt als Tausender, Komma als Dezimal
                     # Entferne Tausender-Punkte und ersetze Komma durch Punkt
                     clean_value = value.replace('.', '').replace(',', '.')
+                    # Entferne eventuelle Währungssymbole
+                    clean_value = re.sub(r'[€$£¥]', '', clean_value).strip()
                     result['ek_netto'] = Decimal(clean_value)
                     logger.debug(f"Transformiert: ek_netto '{value}' -> {result['ek_netto']}")
                 except Exception as e:
