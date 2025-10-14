@@ -9,13 +9,12 @@ from typing import Dict, Any, Optional
 from src.handlers.unified_handler import UnifiedHandler
 from src.handlers.data_transformer import DataTransformer
 
-from models.integration import ZapierWebhookIn
+from src.models.integration import ZapierWebhookIn
 
 logger = logging.getLogger(__name__)
 
 class ZapierHandler:
     """Handler für Zapier-Webhooks"""
-    
     def __init__(self, unified_handler: UnifiedHandler):
         self.unified = unified_handler
         self.transformer = DataTransformer()
