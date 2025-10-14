@@ -4,12 +4,16 @@ Webhooks für Zapier, Flowers und direkte API-Calls
 """
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request
 from google.cloud import bigquery
 
 import logging
+import json
+import uuid
 
 from src.core.dependencies import (
     get_unified_handler, 
@@ -32,7 +36,7 @@ _unified_handler = None
 _zapier_handler = None
 _flowers_handler = None
 
-@router.post("/zapier/webhook")
+@router.post("/integration/zapier/webhook")
 async def zapier_webhook(request: Request):
     body: Dict[str, Any] = await request.json()
 
@@ -41,6 +45,16 @@ async def zapier_webhook(request: Request):
     prozess_raw = body.get("prozess_name") or body.get("prozess") or "Unbekannt"
     status = body.get("neuer_status") or body.get("status") or "UNBEKANNT"
     bearbeiter = body.get("bearbeiter_name") or body.get("bearbeiter") or "System"
+    # prozess_id übernehmen oder generieren (Pflichtfeld in BQ)
+    prozess_id = (
+        body.get("prozess_id")
+        or body.get("prozessId")
+        or body.get("prozessid")
+    )
+    if not prozess_id:
+        # Neu erzeugen – UUID4 (zufällig). Alternative: deterministisch via uuid5 mit FIN+Prozess.
+        prozess_id = str(uuid.uuid4())
+
 
     # --- prioritaet robust konvertieren (String/Number) + Bounds 1..5 ---
     prio_raw = body.get("prioritaet") or body.get("priorität") or body.get("prio") or body.get("priority")
@@ -59,41 +73,49 @@ async def zapier_webhook(request: Request):
         notizen_val = ""
 
     # --- Insert-Payload (Top-Level Felder enthalten prioritaet/notizen!) ---
-    created_utc = datetime.now(timezone.utc).replace(tzinfo=None)  # BigQuery TIMESTAMP (naiv, UTC)
+    created_utc_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    zusatz_daten_obj = {
+        "zapier_data": body,
+        "ursprung_prozess": prozess_raw,
+        "notizen": body.get("notizen"),
+    }
+    zusatz_daten_str = json.dumps(zusatz_daten_obj, ensure_ascii=False)  # <-- String für BQ
+
     event_data = {
         "fin": fin,
         "prozess_typ": prozess_raw,
+        "prozess_id": prozess_id,
         "status": status,
         "bearbeiter": bearbeiter,
         "prioritaet": prio_val,     # <--- NEU: Top-Level
         "notizen": notizen_val,     # <--- NEU: Top-Level
         "datenquelle": "zapier",
-        "created_at": created_utc,
-        "updated_at": created_utc,
-        "zusatz_daten": {
-            "zapier_data": body,            # Rohdaten weiter behalten
-            "ursprung_prozess": prozess_raw,
-            "notizen": body.get("notizen"), # optional zusätzlich in Zusatzdaten
-        },
+        "created_at": created_utc_iso,
+        "updated_at": created_utc_iso,
+        "zusatz_daten": zusatz_daten_str,
     }
-
-    # --- BigQuery Insert ---
-    errors = bq.insert_rows_json(BQ_TABLE, [event_data])
-    if errors:
-        # Für Cloud Run Logs
-        print("BigQuery insert errors:", errors)
-        return {"success": False, "error": "bq_insert_failed"}
-
-    return {
+    
+    payload = {
         "success": True,
         "fin": fin,
         "prioritaet": prio_val,
         "notizen": notizen_val,
         "source": "zapier",
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timestamp": datetime.now(timezone.utc),  # darf datetime sein
     }
+    # --- BigQuery Insert ---
+    errors = bq.insert_rows_json(BQ_TABLE, [event_data])
+    if errors:
+        # Für Cloud Run Logs
+        print("BigQuery insert errors:", errors)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": "bq_insert_failed"}
+        )
+
+    return JSONResponse(content=jsonable_encoder(payload))
     
-@router.post("/flowers/email")
+@router.post("/integration/flowers/email")
 async def flowers_email_webhook(
     email_data: Dict[str, Any],
     handler: FlowersHandler = Depends(get_flowers_handler)  # Nutzt jetzt dependencies.py
